@@ -1,0 +1,398 @@
+<?php
+/**
+ * @file
+ * google_analytics_counter_queue.admin.inc
+ */
+
+/**
+ * Returns a system settings form for the Google Analytics Counter Queue.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ *
+ * @return array
+ *   Returns a system settings form with Google Analytics Counter Queue settings.
+ */
+function google_analytics_counter_queue_admin_settings_form($form, $form_state) {
+  $form['settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Settings'),
+    '#collapsible' => FALSE,
+    '#collapsed' => FALSE,
+  );
+  $form['settings']['google_analytics_counter_queue_execute_queues_on_cron'] = array(
+    '#type' => 'radios',
+    '#title' => t('Process queues on cron'),
+    '#description' => t('Used to determine whether or not the queues should be processed during the execution of cron jobs (<em>hook_cron()</em>) or not. For large sites, it is recommended that a separate process is created for processing the queues.'),
+    '#options' => array(
+      1 => t('Yes'),
+      0 => t('No'),
+    ),
+    '#default_value' => google_analytics_counter_queue_execute_queues_on_cron(),
+  );
+  $form['settings']['google_analytics_counter_queue_google_analytics_data_query_max_results'] = array(
+    '#type' => 'select',
+    '#title' => t('Maximum number of results'),
+    '#description' => t('Used to determine the number of results retrieved in a single query from Google Analytics data query.'),
+    '#options' => array(
+      '50' => '50',
+      '100' => '100',
+      '250' => '250',
+      '500' => '500',
+      '1000' => '1000',
+    ),
+    '#default_value' => google_analytics_counter_queue_google_analytics_data_query_max_results(),
+  );
+  return system_settings_form($form);
+}
+
+/**
+ * Returns Google Analytics Counter Queue priority queue overview form.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ *
+ * @return array
+ *   Returns a Drupal FAPI array to render.
+ */
+function google_analytics_counter_queue_admin_priority_queue($form, &$form_state) {
+  if (isset($form_state['values']['op']) && in_array($form_state['values']['op'], array(t('Update'), t('Delete'))) &&
+    isset($form_state['values']['operation']) && 'delete' == $form_state['values']['operation'] && !empty($form_state['values']['queue_items']['select'])) {
+    return google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm($form, $form_state, array_filter($form_state['values']['queue_items']['select']));
+  }
+
+  $form['options'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Update options'),
+    '#attributes' => array('class' => array('container-inline')),
+  );
+  $form['options']['operation'] = array(
+    '#type' => 'select',
+    '#title' => t('Operation'),
+    '#title_display' => 'invisible',
+    '#options' => array(
+      'delete' => t('Delete selected items'),
+    ),
+  );
+  $form['options']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Update'),
+  );
+
+  $table_rows = array();
+  $queue = google_analytics_counter_queue_priority_queue();
+  if (0 < count($queue)) {
+    foreach ($queue as $item) {
+      $operation_href_prefix = 'admin/config/system/google-analytics-counter-queue/queue/item/' . $item->getIdentifier();
+      $operations = array(
+        'edit' => array(
+          'title' => t('edit'),
+          'href' => $operation_href_prefix . '/edit',
+        ),
+        'delete' => array(
+          'title' => t('delete'),
+          'href' => $operation_href_prefix . '/delete',
+          'options' => array(
+            'query' => array(
+              'destination' => 'admin/config/system/google-analytics-counter-queue/priority-queue',
+            )
+          ),
+        ),
+      );
+
+      if ($total_records = $item->getTotalRecords()) {
+        $remaining_records = $item->getRemainingRecords();
+        $processed_info = t('@remaining of @total', array(
+          '@total' => $total_records,
+          '@remaining' => $remaining_records ? $remaining_records : t('Unknown'),
+        ));
+      }
+      else {
+        $processed_info = t('Not started');
+      }
+
+      $table_rows[$item->getIdentifier()] = array(
+        'label' => array('data' => array(
+          '#markup' => l($item->getPath(), $item->getPath())),
+        ),
+        'processed' => array(
+          '#markup' => $processed_info,
+        ),
+        'operations' => array('data' => array(
+          '#theme' => 'links',
+          '#links' => $operations,
+          '#attributes' => array('class' => array('links', 'inline')),
+        )),
+        'weight' => array('data' => array(
+          '#type' => 'textfield',
+          '#title' => t('Weight for queue item'),
+          '#title_display' => 'invisible',
+          '#default_value' => $item->getWeight(),
+          '#value' => $item->getWeight(),
+          '#size' => 3,
+          '#attributes' => array('class' => array('queue-item-weight')),
+        )),
+        '#attributes' => array('class' => array('draggable')),
+      );
+    }
+  }
+
+  $form['queue_items'] = array(
+    '#tree' => TRUE,
+    '#type' => 'google_analytics_counter_queue_tableselectdrag',
+    '#header' => array(
+      'label' => t('URL'),
+      'processed' => t('Processed'),
+      'operations' => t('Operations'),
+      'weight' => t('Weight'),
+    ),
+    '#rows' => $table_rows,
+    '#empty' => t('There are currently no priority queue items.'),
+    '#attributes' => array(
+      'id' => 'queue-items',
+    ),
+    '#tableselectdrag_settings' => array(
+      'action' => 'order',
+      'relationship' => 'self',
+      'group' => 'queue-item-weight',
+    ),
+  );
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save changes'),
+  );
+
+  return $form;
+}
+
+/**
+ * Validation handler for the priority queue overview management form.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ */
+function google_analytics_counter_queue_admin_priority_queue_validate($form, &$form_state) {
+  switch ($form_state['values']['op']) {
+    case t('Update'):
+      if (!isset($form_state['values']['queue_items']['select'])) {
+        form_set_error('options][operation', t('You must select at least one queue item to perform operations on.'));
+      }
+      break;
+  }
+}
+
+/**
+ * Submit handler for the priority queue overview management form.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ */
+function google_analytics_counter_queue_admin_priority_queue_submit($form, &$form_state) {
+  switch ($form_state['values']['op']) {
+    case t('Save changes'):
+      if (!empty($form_state['values']['queue_items']['weight'])) {
+        foreach ($form_state['values']['queue_items']['weight'] as $item_id => $weight) {
+          if ($queue_item = google_analytics_counter_queue_queue_item_load($item_id)) {
+            $queue_item->setWeight($weight);
+            $queue_item->save();
+          }
+        }
+        drupal_set_message(t('You have successfully saved the priority queue item weights.'));
+      }
+      break;
+
+    case t('Update'):
+    default:
+      // Force the form to rebuild, this will allow for "delete" to send a
+      // confirmation form prior to actually deleting.
+      $form_state['rebuild'] = TRUE;
+      break;
+  }
+}
+
+/**
+ * Mass delete confirmation form for priority queue items.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ * @param array $queue_items
+ *   An array of queue item identifiers to delete.
+ *
+ * @return array
+ *   Returns the confirmation form to render.
+ */
+function google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm($form, $form_state, $queue_items) {
+  $form['queue_items'] = array(
+    '#tree' => TRUE,
+    '#prefix' => '<ul>',
+    '#suffix' => '</ul>',
+  );
+  foreach ($queue_items as $item_id) {
+    if ($queue_item = google_analytics_counter_queue_queue_item_load($item_id)) {
+      $form['queue_items'][$queue_item->getIdentifier()] = array(
+        '#type' => 'hidden',
+        '#value' => $queue_item->getIdentifier(),
+        '#prefix' => '<li>',
+        '#suffix' => t('<em>@url</em>', array('@url' => $queue_item->getData()->path)) . '</li>',
+      );
+    }
+  }
+  $form['operation'] = array(
+    '#type' => 'hidden',
+    '#value' => 'delete',
+  );
+  $form['#submit'][] = 'google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm_submit';
+  $confirm_question = format_plural(count($queue_items), 'Are you sure you want to delete this item?', 'Are you sure you want to delete these items?');
+  return confirm_form($form, $confirm_question, 'admin/config/system/google-analytics-counter-queue/priority-queue', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
+}
+
+/**
+ * Mass delete confirmation form submit handler; performs delete operations.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ */
+function google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm_submit($form, &$form_state) {
+  if ($form_state['values']['confirm']) {
+    foreach (array_keys($form_state['values']['queue_items']) as $item_id) {
+      if ($queue_item = google_analytics_counter_queue_queue_item_load($item_id)) {
+        $queue_item->delete();
+      }
+    }
+    drupal_set_message(t('You have successfully deleted all selected queue items.'));
+    $form_state['redirect'] = 'admin/config/system/google-analytics-counter-queue/priority-queue';
+  }
+}
+
+/**
+ * Authentication and analytic profile selection form.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ *
+ * @return array
+ *   Returns the authentication form to render.
+ */
+function google_analytics_counter_queue_admin_authentication_form($form, $form_state) {
+  $client = google_analytics_counter_queue_google_analytics_client();
+  if ($client->isAuthenticated()) {
+    $query = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiWebPropertiesQuery($client);
+    $webprops = $query->execute()->getQueryResult();
+
+    $query = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiProfilesQuery($client);
+    $profiles = $query->execute()->getQueryResult();
+
+    $options = array();
+
+    // TODO: This is a copy from the Google Analytics Counter module; further testing is required as this is sloppy.
+
+    $current_profile_id = google_analytics_counter_queue_google_analytics_profile_id();
+    $current_profile = NULL;
+
+    foreach ($profiles as $profile) {
+      $webprop = NULL;
+      foreach ($webprops as $webprop_value) {
+        if ($webprop_value['id'] == $profile['webPropertyId']) {
+          $webprop = $webprop_value;
+        }
+      }
+
+      $options[$webprop['name']][$profile['id']] = theme('google_analytics_counter_queue_google_analytics_profile_label', array('profile' => $profile));
+      if ($current_profile_id == $profile['id']) {
+        $current_profile = $profile;
+      }
+    }
+
+    $form['google_analytics'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Settings'),
+      '#collapsible' => TRUE,
+      '#collapsed' => FALSE,
+    );
+    $form['google_analytics']['google_analytics_counter_queue_profile_id'] = array(
+      '#type' => 'select',
+      '#title' => t('Reports profile'),
+      '#options' => $options,
+      '#default_value' => $current_profile_id,
+      '#description' => t('Choose your Google Analytics profile.') . (!empty($current_profile) ? t('The currently active profile is: %profile.', array('%profile' => theme('google_analytics_counter_queue_google_analytics_profile_label', array('profile' => $current_profile)))) : ''),
+      '#required' => TRUE,
+    );
+    $form['operations'] = array(
+      '#type' => 'container',
+      '#attributes' => array('class' => array('container-inline')),
+    );
+    $form['operations']['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Save settings'),
+    );
+    $form['operations']['revoke_access_token'] = array(
+      '#type' => 'submit',
+      '#value' => t('Revoke access token'),
+    );
+  }
+  else {
+    $form['settings'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Setup'),
+      '#description' => t('When you submit this form, you will be redirected to Google for authentication. Login with the account that has credentials to the Google Analytics profile you would like to use.'),
+      '#collapsible' => TRUE,
+      '#collapsed' => FALSE,
+    );
+    $form['settings']['google_analytics_counter_queue_hd'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Google Apps for Business (optional)'),
+      '#description' => t('Provide the domain name (e.g. google.com) if you domain is registered with Google Apps for Business. Otherwise, leave it blank.'),
+      '#default_value' => google_analytics_counter_queue_google_analytics_profile_id(),
+    );
+    $form['settings']['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Authorize account'),
+    );
+  }
+  return $form;
+}
+
+/**
+ * Submit handler for the administrative Authentication form.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ */
+function google_analytics_counter_queue_admin_authentication_form_submit($form, &$form_state) {
+  $op = isset($form_state['values']['op']) ? $form_state['values']['op'] : '';
+  switch ($op) {
+    case t('Authorize account'):
+      $client = google_analytics_counter_queue_google_analytics_client();
+      $request_token = $client->getRequestToken();
+      $_SESSION['google_analytics_counter_queue']['oauth']['token'] = $request_token;
+      $_SESSION['google_analytics_counter_queue']['destination'] = current_path();
+      $client->obtainAuthorization();
+      break;
+    case t('Save settings'):
+      variable_set('google_analytics_counter_queue_google_analytics_profile_id', $form_state['values']['google_analytics_counter_queue_profile_id']);
+      drupal_set_message(t('Google Analytics authentication settings have been successfully saved.'));
+      break;
+    case t('Revoke access token'):
+      $client = google_analytics_counter_queue_google_analytics_client();
+      $client->revokeToken();
+      drupal_set_message(t('Google Authentication access token has been successfully revoked.'));
+      break;
+  }
+}

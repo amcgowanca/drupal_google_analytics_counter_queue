@@ -1,0 +1,23 @@
+name = Google Analytics Counter Queue
+description = A derivative of Google Analytics Counter contributed module providing queue oriented processing.
+core = 7.x
+version = GOOGLE_ANALYTICS_COUNTER_QUEUE_VERSION
+
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiAuthentication.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiClient.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiQuery.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiQueryCache.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiResults.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiJsonResults.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiQuery.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiDataQuery.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiWebPropertiesQuery.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiProfilesQuery.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiPagePathViewsQuery.inc
+files[] = includes/GoogleAnalyticsCounterQueueOAuthToken.inc
+files[] = includes/GoogleAnalyticsCounterQueuePriorityQueue.inc
+files[] = includes/GoogleAnalyticsCounterQueueQueue.inc
+files[] = includes/GoogleAnalyticsCounterQueueQueueItem.inc
+
+dependencies[] = oauth_common
+dependencies[] = statistics

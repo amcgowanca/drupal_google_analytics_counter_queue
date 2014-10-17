@@ -1,0 +1,225 @@
+<?php
+/**
+ * @file
+ * google_analytics_counter_queue.install
+ */
+
+/**
+ * Implements hook_install().
+ */
+function google_analytics_counter_queue_install() {
+  variable_set('google_analytics_counter_queue_cache_lifetime', NULL);
+  variable_set('google_analytics_counter_queue_google_analytics_oauth_consumer_key', NULL);
+  variable_set('google_analytics_counter_queue_google_analytics_oauth_consumer_secret', NULL);
+  variable_set('google_analytics_counter_queue_google_analytics_oauth_token', NULL);
+  variable_set('google_analytics_counter_queue_google_analytics_oauth_token_secret', NULL);
+  variable_set('google_analytics_counter_queue_google_analytics_profile_id', NULL);
+  variable_set('google_analytics_counter_queue_execute_queues_on_cron', TRUE);
+  variable_set('google_analytics_counter_queue_google_analytics_data_query_max_results', '50');
+  // Drupal's queue API requires that any custom implemented queue classes are
+  // defined as variables, allowing the queue class to be retrieved dynamically
+  // using the variable `queue_class_{queue_name}`. This is primarily used
+  // with the DrupalQueue::get() method.
+  variable_set('queue_class_google_analytics_counter_queue', 'GoogleAnalyticsCounterQueueQueue');
+  variable_set('queue_class_google_analytics_counter_priority_queue', 'GoogleAnalyticsCounterQueuePriorityQueue');
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function google_analytics_counter_queue_uninstall() {
+  variable_del('google_analytics_counter_queue_cache_lifetime');
+  variable_del('google_analytics_counter_queue_google_analytics_oauth_consumer_key');
+  variable_del('google_analytics_counter_queue_google_analytics_oauth_consumer_secret');
+  variable_del('google_analytics_counter_queue_google_analytics_oauth_token');
+  variable_del('google_analytics_counter_queue_google_analytics_oauth_token_secret');
+  variable_del('google_analytics_counter_queue_google_analytics_profile_id');
+  variable_del('google_analytics_counter_queue_execute_queues_on_cron');
+  variable_del('google_analytics_counter_queue_google_analytics_data_query_max_results');
+  variable_del('queue_class_google_analytics_counter_queue');
+  variable_del('queue_class_google_analytics_counter_priority_queue');
+}
+
+/**
+ * Implements hook_schema().
+ */
+function google_analytics_counter_queue_schema() {
+  $schema = array();
+  // Because both the general and priority queues have identical storage tables,
+  // we will simply create the database table schema once and assign to the
+  // $schema variable with correct table names.
+  $queue_table_schema = array(
+    'description' => 'Stores queue items and their data for processing.',
+    'fields' => array(
+      'item_id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique item ID.',
+      ),
+      'path' => array(
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The path for processing.',
+      ),
+      'total_records' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => 0,
+        'description' => 'The total number of records that require processing.',
+      ),
+      'remaining_records' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => 0,
+        'description' => 'The remaining number of records to be processed.',
+      ),
+      'expire' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Timestamp when the claim lease expires on the item.',
+      ),
+      'created' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Timestamp when the item was created.',
+      ),
+      'weight' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Queue item weight, used to determine the order of processing.',
+      ),
+    ),
+    'primary key' => array('item_id'),
+  );
+  $schema['google_analytics_counter_queue_queue'] = $queue_table_schema;
+  $schema['google_analytics_counter_queue_priority_queue'] = $queue_table_schema;
+  $schema['google_analytics_counter_queue_statistics'] = array(
+    'description' => 'Access statistic sums for paths.',
+    'fields' => array(
+      'statistic_id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique identifier for path statistics.',
+      ),
+      'created' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The timestamp in which this path was first created.',
+      ),
+      'updated' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The timestamp in which this path was last updated.',
+      ),
+      'path' => array(
+        'type' => 'varchar',
+        'length' => '1024',
+        'not null' => TRUE,
+        'unique' => TRUE,
+        'description' => 'The path. This is a normalized Drupal path.',
+      ),
+      'totalcount' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'size' => 'big',
+        'description' => 'The total number of times this path has been viewed.',
+      ),
+    ),
+    'primary key' => array('statistic_id'),
+  );
+  $schema['google_analytics_counter_queue_statistics_path'] = array(
+    'description' => '',
+    'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique identifier for individual path statistics.',
+      ),
+      'statistic_id' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The statistic id which this path is related to.',
+      ),
+      'created' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The timestamp in which this path was first created.',
+      ),
+      'updated' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The timestamp in which this path was last updated.',
+      ),
+      'path' => array(
+        'type' => 'varchar',
+        'length' => '1024',
+        'not null' => TRUE,
+        'unique' => TRUE,
+        'description' => 'The path.',
+      ),
+      'count' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'size' => 'big',
+        'description' => 'The total number of times this path has been viewed.',
+      ),
+    ),
+    'primary key' => array('id'),
+    'foreign keys' => array(
+      'google_analytics_counter_queue_statistics' => array('statistic_id' => 'statistic_id'),
+    ),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function google_analytics_counter_queue_requirements($phase) {
+  $requirements = array();
+  if ('runtime' == $phase) {
+    $requirements['google_analytics_counter_queue_authentication'] = array(
+      'title' => t('Google Analytics Counter Queue - Authentication'),
+      'description' => t('Google Analytics Counter Queue requires that a Google Analytics account is connected and authenticated to read reports allowing the module to fetch data and process paths to update the number of view counts. You can connect an account !link.', array(
+        '!link' => l(t('here'), 'admin/config/system/google-analytics-counter-queue/authentication'),
+      )),
+    );
+
+    $client = google_analytics_counter_queue_google_analytics_client();
+    if ($client->isAuthenticated()) {
+      $requirements['google_analytics_counter_queue_authentication']['value'] = t('Authenticated');
+      $requirements['google_analytics_counter_queue_authentication']['severity'] = REQUIREMENT_OK;
+    }
+    else {
+      $requirements['google_analytics_counter_queue_authentication']['value'] = t('Not authenticated');
+      $requirements['google_analytics_counter_queue_authentication']['severity'] = REQUIREMENT_ERROR;
+    }
+  }
+  return $requirements;
+}
