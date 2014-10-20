@@ -4,9 +4,6 @@
  * google_analytics_counter_queue.module
  */
 
-// TODO: Remove after dev.
-function _anon() { }
-
 /**
  * Denotes the core and version number (e.g. 7.x-1.0).
  */
@@ -68,7 +65,6 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_queue_item_delete_confirm', 6),
   );
-  // TODO: Add method for processing priority queue via batch operation.
   $items['admin/config/system/google-analytics-counter-queue/authentication'] = array(
     'title' => 'Authentication',
     'type' => MENU_LOCAL_TASK,
@@ -87,7 +83,7 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'google_analytics_counter_queue_oauth_callback',
     'access callback' => TRUE,
   );
-  return $items;
+  return $items;much
 }
 
 /**
@@ -490,6 +486,15 @@ function google_analytics_counter_queue_queue_item_load($item_id) {
   return GoogleAnalyticsCounterQueueQueueItem::load($item_id);
 }
 
+/**
+ * Loads a single queue item given a path.
+ *
+ * @param string $path
+ *   The path of the queue item to load.
+ *
+ * @return mixed
+ *   Returns the queue item if it exists, otherwise returns NULL.
+ */
 function google_analytics_counter_queue_queue_item_load_by_path($path) {
   return GoogleAnalyticsCounterQueueQueueItem::load(NULL, array('path' => $path));
 }
