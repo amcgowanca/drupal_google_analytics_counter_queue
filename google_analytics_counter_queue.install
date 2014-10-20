@@ -15,13 +15,23 @@ function google_analytics_counter_queue_install() {
   variable_set('google_analytics_counter_queue_google_analytics_oauth_token_secret', NULL);
   variable_set('google_analytics_counter_queue_google_analytics_profile_id', NULL);
   variable_set('google_analytics_counter_queue_execute_queues_on_cron', TRUE);
-  variable_set('google_analytics_counter_queue_google_analytics_data_query_max_results', '50');
+  variable_set('google_analytics_counter_queue_google_analytics_data_query_max_results', '1000');
+  variable_set('google_analytics_counter_queue_google_analytics_queue_item_threshold', '3');
+  variable_set('google_analytics_counter_queue_update_statistics_node_counter', 1);
+  variable_set('google_analytics_counter_queue_queue_ignored_paths', implode("\n", array('node/*/edit')));
+  variable_set('google_analytics_counter_queue_queue_process_admin_paths', 0);
+  variable_set('google_analytics_counter_queue_google_analytics_data_query_start_date', '2005-01-01');
   // Drupal's queue API requires that any custom implemented queue classes are
   // defined as variables, allowing the queue class to be retrieved dynamically
   // using the variable `queue_class_{queue_name}`. This is primarily used
   // with the DrupalQueue::get() method.
   variable_set('queue_class_google_analytics_counter_queue', 'GoogleAnalyticsCounterQueueQueue');
   variable_set('queue_class_google_analytics_counter_priority_queue', 'GoogleAnalyticsCounterQueuePriorityQueue');
+  // During installation, we will ensure that the statistics module, if enabled,
+  // has its content view increment turned off.
+  if (module_enabled('statistics')) {
+    variable_set('statistics_count_content_views', 0);
+  }
 }
 
 /**
@@ -36,6 +46,12 @@ function google_analytics_counter_queue_uninstall() {
   variable_del('google_analytics_counter_queue_google_analytics_profile_id');
   variable_del('google_analytics_counter_queue_execute_queues_on_cron');
   variable_del('google_analytics_counter_queue_google_analytics_data_query_max_results');
+  variable_del('google_analytics_counter_queue_google_analytics_queue_item_threshold');
+  variable_del('google_analytics_counter_queue_update_statistics_node_counter');
+  variable_del('google_analytics_counter_queue_queue_ignored_paths');
+  variable_del('google_analytics_counter_queue_queue_process_admin_paths');
+  variable_del('google_analytics_counter_queue_google_analytics_data_query_start_date');
+  // Delete Drupal core's queue related variables to perform complete cleanup.
   variable_del('queue_class_google_analytics_counter_queue');
   variable_del('queue_class_google_analytics_counter_priority_queue');
 }
@@ -83,6 +99,7 @@ function google_analytics_counter_queue_schema() {
       'expire' => array(
         'type' => 'int',
         'not null' => TRUE,
+        'unsigned' => TRUE,
         'default' => 0,
         'description' => 'Timestamp when the claim lease expires on the item.',
       ),
@@ -91,6 +108,13 @@ function google_analytics_counter_queue_schema() {
         'not null' => TRUE,
         'default' => 0,
         'description' => 'Timestamp when the item was created.',
+      ),
+      'attempts' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => 'Number of attempts to process where an error occurred or no data returned.',
       ),
       'weight' => array(
         'type' => 'int',
@@ -219,6 +243,24 @@ function google_analytics_counter_queue_requirements($phase) {
     else {
       $requirements['google_analytics_counter_queue_authentication']['value'] = t('Not authenticated');
       $requirements['google_analytics_counter_queue_authentication']['severity'] = REQUIREMENT_ERROR;
+    }
+
+    if (google_analytics_counter_queue_update_statistics_node_counter()) {
+      $statistics_count_content_views = variable_get('statistics_count_content_views', 0);
+      $requirements['google_analytics_counter_queue_statistics'] = array(
+        'title' => t('Google Analytics Counter Queue and Statistics'),
+        'description' => t('Google Analytics Counter Queue requires that the Drupal core Statistics module does not track content views <em>if</em> the %update_var_name is enabled.', array(
+          '%update_var_name' => t('Update node statistics counter'),
+        )),
+      );
+      if (!$statistics_count_content_views) {
+        $requirements['google_analytics_counter_queue_statistics']['value'] = t('OK');
+        $requirements['google_analytics_counter_queue_statistics']['severity'] = REQUIREMENT_OK;
+      }
+      else {
+        $requirements['google_analytics_counter_queue_statistics']['value'] = t('Error');
+        $requirements['google_analytics_counter_queue_statistics']['severity'] = REQUIREMENT_ERROR;
+      }
     }
   }
   return $requirements;

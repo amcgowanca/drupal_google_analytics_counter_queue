@@ -52,15 +52,32 @@ function drush_google_analytics_counter_queue_oauth_revoke_token() {
 function drush_google_analytics_counter_queue_run($queue_name = '') {
   // TODO: Process items in "bulk".
   // TODO: The `total-items` refers to then number of queue items to process at a single time (re: paths).
+  if (!in_array($queue_name, array('google_analytics_counter_queue', 'google_analytics_counter_priority_queue'))) {
+    return drush_log(dt('The specified queue name, @queue, is not defined by Google Analytics Counter Queue.', array('@queue' => $queue_name)), 'error');
+  }
+
+  $queue = DrupalQueue::get($queue_name);
+  while ($item = $queue->claimItem()) {
+    google_analytics_counter_queue_process_queue($item);
+    $queue->deleteItem($item);
+  }
+
   drush_print(dt('Running queue @queue', array('@queue' => $queue_name)));
 }
 
+/**
+ *
+ */
 function drush_google_analytics_counter_queue_reset_statistics() {
   foreach (array('google_analytics_counter_queue_statistics', 'google_analytics_counter_queue_statistics_path') as $table) {
     db_truncate($table)->execute();
   }
 }
 
+/**
+ * @param null $item_id
+ * @return mixed
+ */
 function drush_google_analytics_counter_queue_item_run($item_id = NULL) {
   $queue_item = google_analytics_counter_queue_queue_item_load($item_id);
   if (!$queue_item) {

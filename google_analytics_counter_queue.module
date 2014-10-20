@@ -115,14 +115,6 @@ function google_analytics_counter_queue_permission() {
 }
 
 /**
- * Implements hook_cron().
- */
-function google_analytics_counter_queue_cron() {
-  // TODO: Add a process for checking the authentication regularly to ensure.
-  _anon();
-}
-
-/**
  * Implements hook_theme().
  */
 function google_analytics_counter_queue_theme() {
@@ -198,8 +190,10 @@ function google_analytics_counter_queue_process_queue($queue_item) {
     ->setParameter('start-date', google_analytics_counter_queue_google_analytics_data_query_start_date())
     ->setParameter('end-date', date('Y-m-d', strtotime('tomorrow')))
     ->setParameter('max-results', google_analytics_counter_queue_google_analytics_data_query_max_results())
-    ->setParameter('filters', 'ga:pagePath=@' . trim($queue_item->getPath(), '/'));
-
+    ->setParameter(new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameter('filters',
+        array('ga:pagePath' => array($queue_item->getPath())),
+        new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableFilterableQueryParameterOperatorContains()
+    ));
   if ($queue_item->getTotalRecords() && $queue_item->getRemainingRecords()) {
     $difference = $queue_item->getTotalRecords() - $queue_item->getRemainingRecords();
     if (0 > $difference) {
@@ -217,9 +211,9 @@ function google_analytics_counter_queue_process_queue($queue_item) {
     }
     $query->setParameter('start-index', $start_index);
   }
-
   $query->execute();
   $results = $query->getQueryResult();
+
   if (!$results->isEmpty()) {
     $data = $results->getData();
 
@@ -251,18 +245,22 @@ function google_analytics_counter_queue_process_queue($queue_item) {
 
           if (google_analytics_counter_queue_valid_path($pagepath_info['path'])) {
             $drupal_path = drupal_get_normal_path($pagepath_info['path']);
-            if (!isset($pathviews[$drupal_path])) {
-              $pathviews[$drupal_path] = 0;
+            if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($drupal_path)) {
+              continue;
             }
-            $pathviews[$drupal_path] = $pathviews[$drupal_path] + $ga_pageviews;
-          }
-          else {
-            $pathviews[$pagepath_info['path']] = FALSE;
+
+            $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
+            if (!empty($ignored_paths) && drupal_match_path($pagepath_info['path'], $ignored_paths)) {
+              continue;
+            }
+
+            if (!isset($pathviews[$drupal_path])) {
+              $pathviews[$drupal_path] = array();
+              $pathviews[$drupal_path][$pagepath_info['path']] = 0;
+            }
+            $pathviews[$drupal_path][$pagepath_info['path']] += $ga_pageviews;
           }
         }
-
-        // TODO: Find possible paths (whether this page path is an alias or source)
-        // TODO: Update "system" path in google_analytics_counter_queue_statistics_temporary
       }
     }
 
@@ -277,25 +275,33 @@ function google_analytics_counter_queue_process_queue($queue_item) {
           }
         }
 
-        if (isset($statistics->items[$queue_item_normal_path])) {
-          db_update('google_analytics_counter_queue_statistics_path')
-            ->fields(array(
-              'updated' => time(),
-              'count' => $pathviews[$queue_item_normal_path],
-            ))
-            ->condition('id', $statistics->items[$queue_item_normal_path]->id)
-            ->execute();
-        }
-        else {
-          db_insert('google_analytics_counter_queue_statistics_path')
-            ->fields(array(
-              'created' => time(),
-              'updated' => time(),
-              'path' => $queue_item_normal_path,
-              'count' => $pathviews[$queue_item_normal_path],
-              'statistic_id' => $statistics->statistic_id,
-            ))
-            ->execute();
+        foreach ($pathviews as $normalized_path => $path_variations) {
+          foreach ($path_variations as $path => $view_count) {
+            if (FALSE === $view_count) {
+              continue;
+            }
+
+            if (isset($statistics->items[$path])) {
+              db_update('google_analytics_counter_queue_statistics_path')
+                ->fields(array(
+                  'updated' => time(),
+                  'count' => $view_count,
+                ))
+                ->condition('id', $statistics->items[$path]->id)
+                ->execute();
+            }
+            else {
+              db_insert('google_analytics_counter_queue_statistics_path')
+                ->fields(array(
+                  'created' => time(),
+                  'updated' => time(),
+                  'path' => $path,
+                  'count' => $view_count,
+                  'statistic_id' => $statistics->statistic_id,
+                ))
+                ->execute();
+            }
+          }
         }
 
         $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
@@ -304,16 +310,29 @@ function google_analytics_counter_queue_process_queue($queue_item) {
         $sum = $query->execute()
           ->fetchObject();
         if (FALSE !== $sum && $sum->sum != $statistics->totalcount) {
+          $timestamp = time();
           db_update('google_analytics_counter_queue_statistics')
             ->fields(array(
               'totalcount' => $sum->sum,
-              'updated' => time(),
+              'updated' => $timestamp,
             ))
             ->condition('statistic_id', $statistics->statistic_id)
             ->execute();
+          // Reset the static cached statistics for this path and reload.
+          $statistics = google_analytics_counter_queue_statistics_path($statistics->path, TRUE);
         }
+
+        $queue_item->setProcessedState(TRUE);
+        module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, $statistics);
       }
     }
+    else {
+      $queue_item->setProcessedState(TRUE);
+      module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, NULL);
+    }
+  }
+  else {
+    $queue_item->setAttempts($queue_item->getAttempts() + 1);
   }
 }
 
@@ -734,9 +753,13 @@ function google_analytics_counter_queue_valid_path($path) {
   return $static_fast_cache[$path];
 }
 
-function google_analytics_counter_queue_statistics_path($path) {
-  static $static_fast_cache = array();
-  if (!isset($static_fast_cache[$path])) {
+/**
+ * @param $path
+ * @return mixed
+ */
+function google_analytics_counter_queue_statistics_path($path, $reset = FALSE) {
+  $static_fast_cache = &drupal_static(__FUNCTION__, array());
+  if (!isset($static_fast_cache[$path]) || isset($static_fast_cache[$path]) && $reset) {
     $query = db_select('google_analytics_counter_queue_statistics', 's')
       ->fields('s')
       ->condition('s.path', $path)
@@ -760,6 +783,12 @@ function google_analytics_counter_queue_statistics_path($path) {
   return $static_fast_cache[$path];
 }
 
+/**
+ * @param $path
+ * @param int $total_count
+ * @param int $timestamp
+ * @return bool
+ */
 function _google_analytics_counter_queue_statistics_create($path, $total_count = 0, $timestamp = REQUEST_TIME) {
   if ($exists = google_analytics_counter_queue_statistics_path($path)) {
     return FALSE;
@@ -776,9 +805,12 @@ function _google_analytics_counter_queue_statistics_create($path, $total_count =
     ->fields($statistic)
     ->execute();
   if ($statistic_id) {
-    $statistic['statistic_id'] = $statistic;
+    $statistic['statistic_id'] = $statistic_id;
     $statistic['items'] = array();
-    return (object) $statistic;
+
+    $static_fast_cache = &drupal_static('google_analytics_counter_queue_statistics_path', array());
+    $static_fast_cache[$path] = (object) $statistic;
+    return $static_fast_cache[$path];
   }
 
   return FALSE;
@@ -1007,5 +1039,193 @@ function google_analytics_counter_queue_queue_item_delete_confirm_submit($form, 
  * @return mixed
  */
 function google_analytics_counter_queue_google_analytics_data_query_max_results() {
-  return variable_get('google_analytics_counter_queue_google_analytics_data_query_max_results', '50');
+  return variable_get('google_analytics_counter_queue_google_analytics_data_query_max_results', '1000');
+}
+
+/**
+ * @return bool
+ */
+function google_analytics_counter_queue_queue_process_admin_paths() {
+  return (bool) variable_get('google_analytics_counter_queue_queue_process_admin_paths', 0);
+}
+
+/**
+ * @return string
+ */
+function google_analytics_counter_queue_queue_ignored_paths() {
+  return variable_get('google_analytics_counter_queue_queue_ignored_paths', '');
+}
+
+/**
+ * @return bool
+ */
+function google_analytics_counter_queue_update_statistics_node_counter() {
+  return (bool) variable_get('google_analytics_counter_queue_update_statistics_node_counter', 1);
+}
+
+/**
+ * @return bool
+ */
+function google_analytics_counter_queue_statistics_allow_update() {
+  return google_analytics_counter_queue_update_statistics_node_counter() && !variable_get('statistics_count_content_views');
+}
+
+/**
+ * @return int
+ */
+function google_analytics_counter_queue_google_analytics_queue_item_threshold() {
+  return variable_get('google_analytics_counter_queue_google_analytics_queue_item_threshold', '3');
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_queue_item_processed().
+ */
+function statistics_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics) {
+  if (NULL !== $statistics && google_analytics_counter_queue_statistics_allow_update()) {
+    // Attempt to lookup the queue item's path source.
+    $normalized_path = drupal_lookup_path('source', $queue_item->getPath());
+    // If FALSE is returned from `drupal_lookup_path`, assume that the queue
+    // item path is already normalized (we hope).
+    $normalized_path = FALSE === $normalized_path ? $queue_item->getPath() : $normalized_path;
+    if (preg_match('|^node/([0-9]+)?|', $normalized_path, $matches)) {
+      $node_id = isset($matches[1]) ? $matches[1] : NULL;
+      if (is_numeric($node_id)) {
+        $node_id = intval($node_id);
+        db_merge('node_counter')
+          ->key(array('nid' => $node_id))
+          ->fields(array(
+            'daycount' => 0,
+            'totalcount' => $statistics->totalcount,
+            'timestamp' => time(),
+          ))
+          ->execute();
+        watchdog(WATCHDOG_DEBUG, t("Updated Drupal core statistics' {node_counter} table for node @node_id.", array('@node_id' => $node_id)));
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_google_analytics_api_query_alter().
+ */
+function node_google_analytics_counter_queue_google_analytics_api_query_alter(GoogleAnalyticsCounterQueueGoogleApiQuery $query) {
+  if ('data/ga' === $query->getEndpointPath()) {
+    foreach ($query->getParameters() as $parameter) {
+      if ('filters' === $parameter->getName()) {
+        $filters = array();
+        foreach ($parameter->getValue() as $filter_name => $filter_value) {
+          if ('ga:pagePath' === $filter_name) {
+            $original = $filter_value;
+            foreach ($original as $value) {
+              _node_google_analytics_counter_queue_generate_node_aliases_for_node_system_path($value);
+              $filters = array_merge($filters, $value);
+            }
+          }
+        }
+
+        $param_value = $parameter->getValue();
+        if (isset($param_value['ga:pagePath'])) {
+          $param_value['ga:pagePath'] = $filters;
+          $parameter->setValue($param_value);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Helper function for retrieving path aliases for a node system path.
+ *
+ * @param string &$path
+ *   A path passed by reference. If the path is a node system path, the returned
+ *   value of this variable will be an array containing the node system path and
+ *   any URL aliases that might exist for it.
+ */
+function _node_google_analytics_counter_queue_generate_node_aliases_for_node_system_path(&$path) {
+  if (preg_match('|node/([0-9]+)?|', $path, $matches)) {
+    $node_id = isset($matches[1]) ? $matches[1] : NULL;
+    $original = $path;
+    if (is_numeric($node_id)) {
+      $node_id = intval($node_id);
+      $path = array($path);
+
+      $query = db_select('url_alias', 'a')
+        ->fields('a', array('alias'))
+        ->condition('a.source', 'node/' . $node_id)
+        ->execute();
+      while ($row = $query->fetchObject()) {
+        $path[] = $row->alias;
+      }
+    }
+  }
+}
+
+/**
+ * Generates batch information for a specified array of queue item identifiers.
+ *
+ * @param array $queue_item_ids
+ *   An array of queue item identifiers to generate a batch for.
+ *
+ * @return array
+ *   The batch information.
+ */
+function google_analytics_counter_queue_process_queue_batch(array $queue_item_ids) {
+  $operations = array();
+  foreach ($queue_item_ids as $queue_item_id) {
+    $operations[] = array(
+      'google_analytics_counter_queue_process_queue_batch_op',
+      array($queue_item_id),
+    );
+  }
+
+  $batch = array(
+    'operations' => $operations,
+    'title' => t('Processing queue items'),
+    'init_message' => t('Initializing batch for processing queue items'),
+    'progress_message' => t('Processed @current out of @total'),
+    'error_message' => t('Batch processing has encountered an error.'),
+  );
+  return $batch;
+}
+
+/**
+ * Queue item batch operating callback. Processes a single queue item.
+ *
+ * @param int $item_id
+ *   The id of the queue item to process.
+ * @param array $context
+ *   The batch context information array.
+ *
+ * @return bool
+ *   Always returns TRUE.
+ */
+function google_analytics_counter_queue_process_queue_batch_op($item_id, &$context) {
+  if (empty($context['sandbox'])) {
+    $context['sandbox'] = array();
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['current_queue_item'] = $item_id;
+  }
+
+  $queue_item = google_analytics_counter_queue_queue_item_load($item_id);
+  $queue_item->setExpires(time() + 3600);
+  $queue_item->save();
+
+  $context['sandbox']['progress']++;
+  $context['message'] = t('Process queue item: %path', array('%path' => $queue_item->getPath()));
+
+  $processed = FALSE;
+  do {
+    google_analytics_counter_queue_process_queue($queue_item);
+    if (!$queue_item->getProcessedState() && $queue_item->getAttempts() > google_analytics_counter_queue_google_analytics_queue_item_threshold()) {
+      $processed = TRUE;
+    }
+    if ($queue_item->getProcessedState()) {
+      $processed = TRUE;
+    }
+  }
+  while (!$processed) ;
+
+  $queue_item->delete();
+
+  return TRUE;
 }

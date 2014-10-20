@@ -7,7 +7,7 @@
 /**
  * Class GoogleAnalyticsCounterQueueQueueItem
  */
-class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
+class GoogleAnalyticsCounterQueueQueueItem {
   /**
    * @access public
    *
@@ -22,7 +22,7 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
    *   Returns a newly created instantiated instance using the specified data.
    */
   public static function factory(stdClass $item, GoogleAnalyticsCounterQueueQueue $queue = NULL) {
-    $instance = new self($item->item_id, $item->path, $item->created, $item->expire, $item->weight, $item->total_records, $item->remaining_records, $queue);
+    $instance = new self($queue, $item->item_id, $item->path, $item->created, $item->expire, $item->weight, $item->total_records, $item->remaining_records, $item->attempts);
     return $instance;
   }
 
@@ -144,10 +144,25 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
   private $total_records = NULL;
 
   /**
+   * The number of attempts to process this queue item.
+   *
+   * @var int
+   */
+  private $attempts = 0;
+
+  /**
+   * @var bool
+   */
+  private $processed = FALSE;
+
+  /**
    * Creates a new instance of GoogleAnalyticsCounterQueueQueueItem.
    *
    * @access public
    *
+   *
+   * @param GoogleAnalyticsCounterQueueQueue $queue
+   *   The queue which this queue item belongs to.
    * @param int $id
    *   The queue item's identifier.
    * @param string $path
@@ -162,14 +177,15 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
    *   The total records this queue item has for processing.
    * @param int $remaining_records
    *   The remaining number of records to process.
-   * @param GoogleAnalyticsCounterQueueQueue $queue
-   *   The queue which this queue item belongs to.
+   * @param int $attempts
+   *   The number of attempts to process this queue item.
    */
-  public function __construct($id = NULL, $path = '', $created = 0, $expires = 0, $weight = NULL, $total_records = NULL, $remaining_records = NULL, GoogleAnalyticsCounterQueueQueue $queue = NULL) {
+  public function __construct(GoogleAnalyticsCounterQueueQueue $queue = NULL, $id = NULL, $path = '', $created = 0, $expires = 0, $weight = NULL, $total_records = NULL, $remaining_records = NULL, $attempts = 0) {
     $this->id = $id;
     $this->path = $path;
     $this->created = $created;
     $this->expires = $expires;
+    $this->attempts = 0;
 
     if ($queue) {
       $this->setQueue($queue);
@@ -270,6 +286,25 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
     return $this->remaining_records;
   }
 
+  public function setAttempts($value) {
+    $this->attempts = $value;
+    $this->changed = TRUE;
+    return $this;
+  }
+
+  public function getAttempts() {
+    return $this->attempts;
+  }
+
+  public function setProcessedState($value) {
+    $this->processed = $value;
+    return $this;
+  }
+
+  public function getProcessedState() {
+    return $this->processed;
+  }
+
   public function save() {
     if (!$this->changed) {
       return;
@@ -294,6 +329,7 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
         'weight' => NULL === $this->weight ? 0 : $this->weight,
         'total_records' => $this->total_records,
         'remaining_records' => $this->remaining_records,
+        'attempts' => $this->attempts,
       ))
       ->execute();
 
@@ -324,30 +360,6 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
   }
 
   /**
-   * {@inheritdoc}
-   */
-  public function serialize() {
-    return serialize(array(
-      'created' => $this->created,
-      'expires' => $this->expires,
-      'weight' => $this->weight,
-      'path' => $this->path,
-    ));
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function unserialize($serialized_data) {
-    $serialized_data = unserialize($serialized_data);
-
-    $this->created = isset($serialized_data['created']) ? $serialized_data['created'] : 0;
-    $this->expires = isset($serialized_data['expires']) ? $serialized_data['expires'] : 0;
-    $this->weight = isset($serialized_data['weight']) ? $serialized_data['weight'] : NULL;
-    $this->path = isset($serialized_data['path']) ? $serialized_data['path'] : '';
-  }
-
-  /**
    * Magical method for the intent of satisfying Drupal.
    *
    * Only purpose is to return this instance when the 'data' property is
@@ -356,12 +368,20 @@ class GoogleAnalyticsCounterQueueQueueItem implements Serializable {
    * items, we do make use of any "data" property.
    *
    * @access public
+   *
+   * @param string $property
+   *   The only valid value is `data`.
+   *
+   * @return GoogleAnalyticsCounterQueueQueueItem
+   *   Returns this queue item instance when `$property` is `data`.
+   *
+   * @throws InvalidArgumentException
+   *   Thrown if the value of `$property` is not `data`.
    */
   public function __get($property) {
     if ('data' === $property) {
       return $this;
     }
-
     throw new InvalidArgumentException(t('The specified property %property does not exist. The use of the __get() should be restricted to only the <em>data</em> property.', array(
       '%property' => $property,
     )));

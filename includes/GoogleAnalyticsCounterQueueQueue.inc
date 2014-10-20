@@ -19,15 +19,30 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    * Creates new instance of GoogleAnalyticsCounterQueueQueue.
    *
    * @access public
+   *
+   * @param string $name
+   *   The machine name of this queue.
    */
-  public function __construct($name = 'Google Analytics Counter Queue') {
+  public function __construct($name = 'google_analytics_counter_queue_queue') {
     $this->name = $name;
   }
 
+  /**
+   * @return string
+   */
   public function getName() {
     return $this->name;
   }
 
+  /**
+   * A boolean indicating whether this queue is a priority queue.
+   *
+   * @access public
+   *
+   * @return bool
+   *   Returns TRUE if this queue is a priority based on `weight` property,
+   *   otherwise returns FALSE.
+   */
   public function isPriority() {
     return FALSE;
   }
@@ -58,10 +73,6 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    */
   public function createItem($data, $weight = NULL) {
     $item = new GoogleAnalyticsCounterQueueQueueItem(NULL, $data, 0, $weight, $this);
-
-    $item = $this->createItemStub();
-    $item->path = $data;
-
     $query = db_insert($this->getTable())
       ->fields(array(
         'path' => $item,
@@ -147,7 +158,15 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
       throw new InvalidArgumentException();
     }
 
-    if (!$force_delete && $item->getTotalRecords() && $item->getRemainingRecords()) {
+    if (!$force_delete && (!$item->getProcessedState() && $item->getAttempts() < google_analytics_counter_queue_google_analytics_queue_item_threshold())) {
+      watchdog(WATCHDOG_DEBUG, t('Attempt to delete queue item @queue; attempts to process is less than threshold.', array(
+        '@queue' => $item->getIdentifier(),
+      )));
+      $item->save();
+      return;
+    }
+
+    if (!$force_delete && ($item->getTotalRecords() && $item->getRemainingRecords())) {
       watchdog(WATCHDOG_DEBUG, t('Attempt to delete a queue item which has records remaining; saving records instead.'));
       $item->save();
       return;
@@ -204,13 +223,6 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
     // Delete all items from within the queue; however, we will not delete the
     // queue table itself as we will need it again.
     db_delete($this->getTable())->execute();
-  }
-
-  protected function createItemStub() {
-    $stub = (object) array(
-      'path' => '',
-    );
-    return $stub;
   }
 
   protected $items = NULL;

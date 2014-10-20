@@ -19,5 +19,14 @@ files[] = includes/GoogleAnalyticsCounterQueuePriorityQueue.inc
 files[] = includes/GoogleAnalyticsCounterQueueQueue.inc
 files[] = includes/GoogleAnalyticsCounterQueueQueueItem.inc
 
+
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameterOperator.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameterOperatorContains.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameterOperatorEquals.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameter.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiFilterableQueryParameterOperator.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiQueryParameter.inc
+files[] = includes/GoogleAnalyticsCounterQueueGoogleApiQueryParameter.inc
+
 dependencies[] = oauth_common
 dependencies[] = statistics

@@ -166,20 +166,25 @@ abstract class GoogleAnalyticsCounterQueueGoogleApiQuery {
     return $this->path;
   }
 
-  public function setParameter($name, $value) {
-    if (!empty($name)) {
-      if (is_array($this->parameters[$name])) {
-        $this->parameters[$name][] = $value;
-      }
-      else {
-        $this->parameters[$name] = $value;
-      }
+  public function setParameter($parameter, $arg2 = NULL) {
+    if ($parameter instanceof GoogleAnalyticsCounterQueueGoogleApiQueryParameter) {
+      $this->parameters[$parameter->getName()] = $parameter;
       return $this;
     }
+
+    if (!empty($parameter) && !empty($arg2)) {
+      if (!isset($this->parameters[$parameter])) {
+        $parameter = new GoogleAnalyticsCounterQueueGoogleApiQueryParameter($parameter, $arg2);
+        $this->parameters[$parameter->getName()] = $parameter;
+        return $this;
+      }
+    }
+
     return FALSE;
   }
 
   public function getParameter($name, $default_value = NULL) {
+    // TODO: Refactor for parameter object.
     if (!isset($this->parameters[$name])) {
       $default_parameters = $this->getDefaultParameters();
       return isset($default_parameters[$name]) ? $default_parameters[$name] : $default_value;
@@ -188,6 +193,7 @@ abstract class GoogleAnalyticsCounterQueueGoogleApiQuery {
   }
 
   public function setParameters(array $parameters) {
+    // TODO: Refactor for parameter object.
     if (!empty($parameters)) {
       foreach ($parameters as $name => $value) {
         if (FALSE === $this->setParameter($name, $value)) {
@@ -205,10 +211,10 @@ abstract class GoogleAnalyticsCounterQueueGoogleApiQuery {
    * @return array
    */
   final public function getParameters() {
-    $default_parameters = $this->getDefaultParameters();
+    /* $default_parameters = $this->getDefaultParameters();
     if (!empty($default_parameters) && is_array($default_parameters)) {
       return $this->parameters + $default_parameters;
-    }
+    } */
     return $this->parameters;
   }
 
@@ -314,6 +320,14 @@ abstract class GoogleAnalyticsCounterQueueGoogleApiQuery {
     return $this->state;
   }
 
+  protected function getCompiledParameters() {
+    $parameters = array();
+    foreach ($this->parameters as $parameter) {
+      $parameters[$parameter->getName()] = $parameter->compile();
+    }
+    return $parameters;
+  }
+
   /**
    * @return $this
    * @throws Exception
@@ -339,8 +353,10 @@ abstract class GoogleAnalyticsCounterQueueGoogleApiQuery {
     // enable them to alter parameters, and so on.
     drupal_alter('google_analytics_counter_queue_google_analytics_api_query', $this);
 
+    $parameters = $this->getCompiledParameters();
+
     $request_url = $this->getEndpointHost() . '/' . $endpoint_path;
-    $request = OAuthRequest::from_consumer_and_token($this->client->getConsumer(), $this->client->getToken(), $this->getMethod(), $request_url, $this->getParameters());
+    $request = OAuthRequest::from_consumer_and_token($this->client->getConsumer(), $this->client->getToken(), $this->getMethod(), $request_url, $parameters);
     $request->sign_request($this->client->getSignatureMethod(), $this->client->getConsumer(), $this->client->getToken());
 
     $url = 'POST' == $request->get_normalized_http_method() ? $request->get_normalized_http_url() : $request->to_url();

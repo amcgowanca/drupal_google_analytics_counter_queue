@@ -37,3 +37,11 @@ function hook_google_analytics_counter_queue_queue_item_update(GoogleAnalyticsCo
 function hook_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
 
 }
+
+function hook_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics = NULL) {
+
+}
+
+function hook_google_analytics_counter_queue_google_analytics_api_query_filter_pagepath_alter(&$path) {
+  
+}

@@ -22,6 +22,32 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
     '#collapsible' => FALSE,
     '#collapsed' => FALSE,
   );
+  $form['settings']['google_analytics_counter_queue_queue_process_admin_paths'] = array(
+    '#type' => 'radios',
+    '#title' => t('Process admin paths'),
+    '#description' => t('Used to determine whether or not the queue items with administrative paths are processed.'),
+    '#options' => array(
+      1 => t('Yes'),
+      0 => t('No'),
+    ),
+    '#default_value' => (int) google_analytics_counter_queue_queue_process_admin_paths(),
+  );
+  $form['settings']['google_analytics_counter_queue_queue_ignored_paths'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Paths to ignore'),
+    '#description' => t("Specify paths to ignore during view count processing. Enter one path per line. The '*' character is a wildcard. Example path %node-wildcard-edit would not be used to calculate the total number of views for %node-wildcard.", array('%node-wildcard' => 'node/*', '%node-wildcard-edit' => 'node/*/edit')),
+    '#default_value' => google_analytics_counter_queue_queue_ignored_paths(),
+  );
+  $form['settings']['google_analytics_counter_queue_update_statistics_node_counter'] = array(
+    '#type' => 'radios',
+    '#title' => t('Update statistics node counter'),
+    '#description' => t('Used to determine whether or not the statistics node_counter table should be updated with the total count for node specific paths.'),
+    '#options' => array(
+      1 => t('Yes'),
+      0 => t('No'),
+    ),
+    '#default_value' => google_analytics_counter_queue_update_statistics_node_counter(),
+  );
   $form['settings']['google_analytics_counter_queue_execute_queues_on_cron'] = array(
     '#type' => 'radios',
     '#title' => t('Process queues on cron'),
@@ -31,6 +57,19 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
       0 => t('No'),
     ),
     '#default_value' => google_analytics_counter_queue_execute_queues_on_cron(),
+  );
+  $form['settings']['google_analytics_counter_queue_google_analytics_queue_item_threshold'] = array(
+    '#type' => 'select',
+    '#title' => t('Queue item process threshold'),
+    '#description' => t('The number of attempts to process a single queue item when the first attempt fails (e.g. request timed out).'),
+    '#options' => array(
+      '1' => '1',
+      '2' => '2',
+      '3' => '3',
+      '5' => '5',
+      '10' => '10',
+    ),
+    '#default_value' => google_analytics_counter_queue_google_analytics_queue_item_threshold(),
   );
   $form['settings']['google_analytics_counter_queue_google_analytics_data_query_max_results'] = array(
     '#type' => 'select',
@@ -76,6 +115,7 @@ function google_analytics_counter_queue_admin_priority_queue($form, &$form_state
     '#title_display' => 'invisible',
     '#options' => array(
       'delete' => t('Delete selected items'),
+      'process' => t('Process selected items'),
     ),
   );
   $form['options']['submit'] = array(
@@ -212,6 +252,10 @@ function google_analytics_counter_queue_admin_priority_queue_submit($form, &$for
 
     case t('Update'):
     default:
+      if ('process' == $form_state['values']['operation']) {
+        $queue_items = array_keys($form_state['values']['queue_items']['select']);
+        batch_set(google_analytics_counter_queue_process_queue_batch($queue_items));
+      }
       // Force the form to rebuild, this will allow for "delete" to send a
       // confirmation form prior to actually deleting.
       $form_state['rebuild'] = TRUE;
