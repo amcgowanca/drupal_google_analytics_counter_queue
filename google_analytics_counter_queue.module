@@ -490,6 +490,10 @@ function google_analytics_counter_queue_queue_item_load($item_id) {
   return GoogleAnalyticsCounterQueueQueueItem::load($item_id);
 }
 
+function google_analytics_counter_queue_queue_item_load_by_path($path) {
+  return GoogleAnalyticsCounterQueueQueueItem::load(NULL, array('path' => $path));
+}
+
 /**
  * Retrieves the next weight value within a queue based on a position.
  *
@@ -1078,6 +1082,110 @@ function google_analytics_counter_queue_google_analytics_queue_item_threshold() 
 }
 
 /**
+ * Generates batch information for a specified array of queue item identifiers.
+ *
+ * @param array $queue_item_ids
+ *   An array of queue item identifiers to generate a batch for.
+ *
+ * @return array
+ *   The batch information.
+ */
+function google_analytics_counter_queue_process_queue_batch(array $queue_item_ids) {
+  $operations = array();
+  foreach ($queue_item_ids as $queue_item_id) {
+    $operations[] = array(
+      'google_analytics_counter_queue_process_queue_batch_op',
+      array($queue_item_id),
+    );
+  }
+
+  $batch = array(
+    'operations' => $operations,
+    'title' => t('Processing queue items'),
+    'init_message' => t('Initializing batch for processing queue items'),
+    'progress_message' => t('Processed @current out of @total'),
+    'error_message' => t('Batch processing has encountered an error.'),
+  );
+  return $batch;
+}
+
+/**
+ * Queue item batch operating callback. Processes a single queue item.
+ *
+ * @param int $item_id
+ *   The id of the queue item to process.
+ * @param array $context
+ *   The batch context information array.
+ *
+ * @return bool
+ *   Always returns TRUE.
+ */
+function google_analytics_counter_queue_process_queue_batch_op($item_id, &$context) {
+  if (empty($context['sandbox'])) {
+    $context['sandbox'] = array();
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['current_queue_item'] = $item_id;
+  }
+
+  // Attempt to load the queue item and set the lease expiring.
+  $queue_item = google_analytics_counter_queue_queue_item_load($item_id);
+  $queue_item->setExpires(time() + 3600);
+  $queue_item->save();
+
+  $processed = FALSE;
+  do {
+    // Attempt to process the queue item for the first time (always). However,
+    // should the queue item not be able to be fully processed or unable to be
+    // processed at all (e.g. HTTP timeout), let's just try again.
+    google_analytics_counter_queue_process_queue($queue_item);
+    // Has the queue item been processed and the processed state set?
+    if (!$queue_item->getProcessedState() && $queue_item->getAttempts() > google_analytics_counter_queue_google_analytics_queue_item_threshold()) {
+      $processed = TRUE;
+    }
+    if ($queue_item->getProcessedState()) {
+      $processed = TRUE;
+    }
+  }
+  while (!$processed);
+  // Keep in mind that the queue item might not actually be truly be deleted
+  // as some conditions might not be met and therefore, the queue item will be
+  // saved instead of deleted.
+  $queue_item->delete();
+  // Increment the progress and set the message.
+  $context['sandbox']['progress']++;
+  $context['message'] = t('Process queue item: %path', array('%path' => $queue_item->getPath()));
+  return TRUE;
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_queue_item_insert().
+ */
+function rules_google_analytics_counter_queue_queue_item_insert(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
+  rules_invoke_event('google_analytics_counter_queue_queue_item_insert', $queue_item);
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_queue_item_update().
+ */
+function rules_google_analytics_counter_queue_queue_item_update(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
+  rules_invoke_event('google_analytics_counter_queue_queue_item_update', $queue_item);
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_queue_item_delete().
+ */
+function rules_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
+  rules_invoke_event('google_analytics_counter_queue_queue_item_delete', $queue_item);
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_queue_item_processed().
+ */
+function rules_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
+  rules_invoke_event('google_analytics_counter_queue_queue_item_processed', $queue_item);
+}
+
+/**
  * Implements hook_google_analytics_counter_queue_queue_item_processed().
  */
 function statistics_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics) {
@@ -1109,6 +1217,7 @@ function statistics_google_analytics_counter_queue_queue_item_processed(GoogleAn
  * Implements hook_google_analytics_counter_queue_google_analytics_api_query_alter().
  */
 function node_google_analytics_counter_queue_google_analytics_api_query_alter(GoogleAnalyticsCounterQueueGoogleApiQuery $query) {
+  // TODO: Cleanup and refactor in the future.
   if ('data/ga' === $query->getEndpointPath()) {
     foreach ($query->getParameters() as $parameter) {
       if ('filters' === $parameter->getName()) {
@@ -1158,74 +1267,4 @@ function _node_google_analytics_counter_queue_generate_node_aliases_for_node_sys
       }
     }
   }
-}
-
-/**
- * Generates batch information for a specified array of queue item identifiers.
- *
- * @param array $queue_item_ids
- *   An array of queue item identifiers to generate a batch for.
- *
- * @return array
- *   The batch information.
- */
-function google_analytics_counter_queue_process_queue_batch(array $queue_item_ids) {
-  $operations = array();
-  foreach ($queue_item_ids as $queue_item_id) {
-    $operations[] = array(
-      'google_analytics_counter_queue_process_queue_batch_op',
-      array($queue_item_id),
-    );
-  }
-
-  $batch = array(
-    'operations' => $operations,
-    'title' => t('Processing queue items'),
-    'init_message' => t('Initializing batch for processing queue items'),
-    'progress_message' => t('Processed @current out of @total'),
-    'error_message' => t('Batch processing has encountered an error.'),
-  );
-  return $batch;
-}
-
-/**
- * Queue item batch operating callback. Processes a single queue item.
- *
- * @param int $item_id
- *   The id of the queue item to process.
- * @param array $context
- *   The batch context information array.
- *
- * @return bool
- *   Always returns TRUE.
- */
-function google_analytics_counter_queue_process_queue_batch_op($item_id, &$context) {
-  if (empty($context['sandbox'])) {
-    $context['sandbox'] = array();
-    $context['sandbox']['progress'] = 0;
-    $context['sandbox']['current_queue_item'] = $item_id;
-  }
-
-  $queue_item = google_analytics_counter_queue_queue_item_load($item_id);
-  $queue_item->setExpires(time() + 3600);
-  $queue_item->save();
-
-  $context['sandbox']['progress']++;
-  $context['message'] = t('Process queue item: %path', array('%path' => $queue_item->getPath()));
-
-  $processed = FALSE;
-  do {
-    google_analytics_counter_queue_process_queue($queue_item);
-    if (!$queue_item->getProcessedState() && $queue_item->getAttempts() > google_analytics_counter_queue_google_analytics_queue_item_threshold()) {
-      $processed = TRUE;
-    }
-    if ($queue_item->getProcessedState()) {
-      $processed = TRUE;
-    }
-  }
-  while (!$processed) ;
-
-  $queue_item->delete();
-
-  return TRUE;
 }

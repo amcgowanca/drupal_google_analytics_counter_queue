@@ -185,6 +185,8 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
         ->execute();
       // TODO: Clear any cache items that may be needed.
     }
+
+    module_invoke_all('google_analytics_counter_queue_queue_item_delete', $item);
   }
 
   /**

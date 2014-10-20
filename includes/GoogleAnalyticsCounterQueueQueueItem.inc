@@ -37,14 +37,18 @@ class GoogleAnalyticsCounterQueueQueueItem {
    * @return GoogleAnalyticsCounterQueueQueueItem
    *   Returns the queue item instance if exists otherwise returns FALSE.
    */
-  public static function load($item_id) {
-    $query = self::loadQueryBuild(google_analytics_counter_queue_priority_queue(), $item_id);
+  public static function load($item_id, array $conditions = array()) {
+    if ($item_id) {
+      $conditions['item_id'] = $item_id;
+    }
+
+    $query = self::loadQueryBuild(google_analytics_counter_queue_priority_queue(), $conditions);
     $query = $query->execute();
     if ($record = $query->fetchObject()) {
       $instance = self::factory($record, google_analytics_counter_queue_priority_queue());
     }
     else {
-      $query = self::loadQueryBuild(google_analytics_counter_queue_queue(), $item_id);
+      $query = self::loadQueryBuild(google_analytics_counter_queue_queue(), $conditions);
       $query = $query->execute();
       if ($record = $query->fetchObject()) {
         $instance = self::factory($record, google_analytics_counter_queue_queue());
@@ -70,10 +74,12 @@ class GoogleAnalyticsCounterQueueQueueItem {
    * @return SelectQuery
    *   The SelectQuery instance for the `$queue`'s table and fields.
    */
-  protected static function loadQueryBuild(GoogleAnalyticsCounterQueueQueue $queue, $item_id) {
+  protected static function loadQueryBuild(GoogleAnalyticsCounterQueueQueue $queue, array $conditions) {
     $query = db_select($queue->getTable(), 'q')
-      ->fields('q')
-      ->condition('q.item_id', $item_id);
+      ->fields('q');
+    foreach ($conditions as $property => $value) {
+      $query->condition('q.' . $property, $value);
+    }
     return $query;
   }
 
@@ -352,10 +358,13 @@ class GoogleAnalyticsCounterQueueQueueItem {
    * Deletes this individual queue item from the queue.
    *
    * @access public
+   *
+   * @param bool $force
+   *   A boolean indicating whether this item should be force deleted or not.
    */
-  public function delete() {
+  public function delete($force = FALSE) {
     if (!empty($this->queue)) {
-      $this->queue->deleteItem($this);
+      $this->queue->deleteItem($this, $force);
     }
   }
 
