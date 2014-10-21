@@ -83,7 +83,7 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'google_analytics_counter_queue_oauth_callback',
     'access callback' => TRUE,
   );
-  return $items;much
+  return $items;
 }
 
 /**
@@ -317,7 +317,6 @@ function google_analytics_counter_queue_process_queue($queue_item) {
           // Reset the static cached statistics for this path and reload.
           $statistics = google_analytics_counter_queue_statistics_path($statistics->path, TRUE);
         }
-
         $queue_item->setProcessedState(TRUE);
         module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, $statistics);
       }

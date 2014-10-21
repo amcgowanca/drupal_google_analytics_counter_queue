@@ -60,7 +60,9 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
   }
 
   /**
-   * Add a queue item and store it directly to the queue.
+   * Do not use.
+   *
+   * @access public
    *
    * @param $data
    *   Arbitrary data to be associated with the new task in the queue.
@@ -70,16 +72,12 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    *   to the queue, otherwise FALSE. We don't guarantee the item was
    *   committed to disk etc, but as far as we know, the item is now in the
    *   queue.
+   *
+   * @throws Exception
+   *   Always thrown.
    */
-  public function createItem($data, $weight = NULL) {
-    $item = new GoogleAnalyticsCounterQueueQueueItem(NULL, $data, 0, $weight, $this);
-    $query = db_insert($this->getTable())
-      ->fields(array(
-        'path' => $item,
-        'created' => time(),
-        'expire' => 0,
-      ));
-    return (bool) $query->execute();
+  public function createItem($data) {
+    throw new Exception(t('Creation of queue items should be achieved by instantiation of the GoogleAnalyticsCounterQueueQueueItem class.'));
   }
 
   /**
@@ -113,7 +111,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    *   run more than once (non-idempotent), a larger lease time will make it
    *   more rare for a given task to run multiple times in cases of failure,
    *   at the cost of higher latency.
-   * @return
+   * @return mixed
    *   On success we return an item object. If the queue is unable to claim an
    *   item it returns false. This implies a best effort to retrieve an item
    *   and either the queue is empty or there is some other non-recoverable
@@ -146,16 +144,21 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
   }
 
   /**
-   * Delete a finished item from the queue.
+   * "Deletes" a finished item from the queue.
    *
-   * @param GoogleAnalyticsCounterQueueQueueItem $item
-   *   The item returned by DrupalQueueInterface::claimItem().
+   * @access public
+   *
+   * @param object $item
+   *   The queue item to process.
    * @param bool $force_delete
-   *   Forces the deletion of a queue item.
+   *   Forces the deletion of a queue item. Default value is FALSE.
+   *
+   * @throws InvalidArgumentException
+   *   Thrown if $item is not of type GoogleAnalyticsCounterQueueQueueItem.
    */
   public function deleteItem($item, $force_delete = FALSE) {
     if (!$item instanceof GoogleAnalyticsCounterQueueQueueItem) {
-      throw new InvalidArgumentException();
+      throw new InvalidArgumentException(t('Argument must be of type GoogleAnalyticsCounterQueueQueueItem.'));
     }
 
     if (!$force_delete && (!$item->getProcessedState() && $item->getAttempts() < google_analytics_counter_queue_google_analytics_queue_item_threshold())) {
@@ -180,10 +183,22 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
         unset($this->item_keys[$item_id]);
       }
 
-      db_delete($this->getTable())
-        ->condition('item_id', $item_id)
-        ->execute();
-      // TODO: Clear any cache items that may be needed.
+      if ($this->isPriority()) {
+        db_delete($this->getTable())
+          ->condition('item_id', $item_id)
+          ->execute();
+      }
+      else {
+        $weight = google_analytics_counter_queue_queue_item_next_weight('bottom', $this);
+        $item->setWeight($weight)
+          ->setExpires(0)
+          ->setAttempts(0)
+          ->getProcessedState(FALSE);
+        $item->save();
+
+        $this->item_keys[$item_id] = count($this->items);
+        $this->items[$this->item_keys[$item_id]] = $item;
+      }
     }
 
     module_invoke_all('google_analytics_counter_queue_queue_item_delete', $item);
@@ -193,11 +208,25 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    * Release an item that the worker could not process, so another
    * worker can come in and process it before the timeout expires.
    *
-   * @param $item
-   * @return boolean
+   * @access public
+   *
+   * @param object $item
+   *   The queue item to release.
+   *
+   * @return bool
+   *   Returns TRUE, always.
+   *
+   * @throws InvalidArgumentException
+   *   Thrown if $item is not of type GoogleAnalyticsCounterQueueQueueItem.
    */
   public function releaseItem($item) {
-    // TODO: Implement releaseItem() method.
+    if (!$item instanceof GoogleAnalyticsCounterQueueQueueItem) {
+      throw new InvalidArgumentException(t('Argument must be of type GoogleAnalyticsCounterQueueQueueItem.'));
+    }
+
+    $item->setExpires(0)
+      ->save();
+    return TRUE;
   }
 
   /**
