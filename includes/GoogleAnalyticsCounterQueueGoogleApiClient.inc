@@ -103,13 +103,11 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
 
   /**
    *
-   * @throws Exception
    */
   public function obtainAuthorization() {
-    if (module_exists('overlay')) {
-      // overlay_close_dialog( ... );
-      // overlay_deliver_empty_page( ... );
-      throw new Exception(t('Google Analytics Counter Queue does not support overlay module.'));
+    if (module_exists('overlay') && 'child' == overlay_get_mode()) {
+      overlay_close_dialog();
+      overlay_deliver_empty_page();
     }
 
     GoogleAnalyticsCounterQueueGoogleAnalyticsAuthentication::obtainAuthorization($this);
