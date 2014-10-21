@@ -92,6 +92,30 @@ function google_analytics_counter_queue_rules_action_info() {
       ),
     ),
   );
+  $items['google_analytics_counter_queue_rules_action_create_priority_queue_item_for_node'] = array(
+    'label' => t('Add node to priority queue'),
+    'configurable' => FALSE,
+    'group' => t('Google Analytics Counter Queue'),
+    'parameter' => array(
+      'node' => array(
+        'type' => 'node',
+        'label' => t('Content'),
+        'save' => FALSE,
+      ),
+    ),
+  );
+  $items['google_analytics_counter_queue_rules_action_remove_priority_queue_item_for_node'] = array(
+    'label' => t('Remove node from priority queue'),
+    'configurable' => FALSE,
+    'group' => t('Google Analytics Counter Queue'),
+    'parameter' => array(
+      'node' => array(
+        'type' => 'node',
+        'label' => t('Content'),
+        'save' => FALSE,
+      ),
+    ),
+  );
   return $items;
 }
 
@@ -109,7 +133,14 @@ function google_analytics_counter_queue_rules_action_info() {
  *   Rules action context.
  */
 function google_analytics_counter_queue_rules_action_create_queue_item_for_node($node, array $context = array()) {
-  $queue = google_analytics_counter_queue_queue();
+  _google_analytics_counter_queue_rules_action_create_queue_item_for_node(google_analytics_counter_queue_queue(), $node, $context);
+}
+
+function google_analytics_counter_queue_rules_action_create_priority_queue_item_for_node($node, array $context = array()) {
+  _google_analytics_counter_queue_rules_action_create_queue_item_for_node(google_analytics_counter_queue_priority_queue(), $node, $context);
+}
+
+function _google_analytics_counter_queue_rules_action_create_queue_item_for_node($queue, $node, array $context) {
   // Only create a queue item should it not already exist within the queue.
   if (!google_analytics_counter_queue_queue_exists_with_path($queue, 'node/' . $node->nid)) {
     $queue_item = new GoogleAnalyticsCounterQueueQueueItem($queue, NULL, 'node/' . $node->nid);
@@ -127,6 +158,14 @@ function google_analytics_counter_queue_rules_action_create_queue_item_for_node(
  *   Rules action context.
  */
 function google_analytics_counter_queue_rules_action_remove_queue_item_for_node($node, array $context = array()) {
+  _google_analytics_counter_queue_rules_action_remove_queue_item_for_node(google_analytics_counter_queue_queue(), $node, $context);
+}
+
+function google_analytics_counter_queue_rules_action_remove_priority_queue_item_for_node($node, array $context = array()) {
+  _google_analytics_counter_queue_rules_action_remove_queue_item_for_node(google_analytics_counter_queue_priority_queue(), $node, $context);
+}
+
+function _google_analytics_counter_queue_rules_action_remove_queue_item_for_node($queue, $node, array $context = array()) {
   // Select all aliases for this particular node, assuming that the node's
   // source path is that of the node system path - node/%node.
   $query = db_select('url_alias', 'a')
