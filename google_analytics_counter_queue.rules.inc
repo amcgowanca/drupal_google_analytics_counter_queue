@@ -81,7 +81,7 @@ function google_analytics_counter_queue_rules_action_info() {
       'position' => array(
         'type' => 'text',
         'label' => t('Position'),
-        'options list' => array('bottom' => t('Default (bottom of queue)'), 'top' => t('Top of queue')),
+        'options list' => 'google_analytics_counter_queue_rules_queue_item_position_list',
         'description' => t('Select the default position of the queue item.'),
       ),
       'node' => array(
@@ -184,4 +184,14 @@ function google_analytics_counter_queue_rules_queue_type_list() {
     'google_analytics_counter_queue' => t('General queue'),
     'google_analytics_counter_priority_queue' => t('Priority queue'),
   );
+}
+
+/**
+ * Returns an array of default positions for queue items created.
+ *
+ * @return array
+ *   An associative array of position => label for queue items.
+ */
+function google_analytics_counter_queue_rules_queue_item_position_list() {
+  return array('bottom' => t('Default (bottom of queue)'), 'top' => t('Top of queue'));
 }

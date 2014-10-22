@@ -224,8 +224,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
       throw new InvalidArgumentException(t('Argument must be of type GoogleAnalyticsCounterQueueQueueItem.'));
     }
 
-    $item->setExpires(0)
-      ->save();
+    $item->setExpires(0)->save();
     return TRUE;
   }
 
@@ -266,6 +265,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
     $this->item_keys = array();
     $this->position = 0;
 
+      // TODO: This query needs to be optimized.
       $query = db_select($this->getTable(), 'q')
         ->fields('q')
         ->orderBy('q.weight')
