@@ -70,9 +70,20 @@ function google_analytics_counter_queue_rules_action_info() {
   $items = array();
   $items['google_analytics_counter_queue_rules_action_create_queue_item_for_node'] = array(
     'label' => t('Add node to queue'),
-    'configurable' => FALSE,
     'group' => t('Google Analytics Counter Queue'),
     'parameter' => array(
+      'queue_type' => array(
+        'type' => 'text',
+        'label' => t('Queue'),
+        'options list' => 'google_analytics_counter_queue_rules_queue_type_list',
+        'description' => t('Select the queue which the queue item will be created in.'),
+      ),
+      'position' => array(
+        'type' => 'text',
+        'label' => t('Position'),
+        'options list' => array('bottom' => t('Default (bottom of queue)'), 'top' => t('Top of queue')),
+        'description' => t('Select the default position of the queue item.'),
+      ),
       'node' => array(
         'type' => 'node',
         'label' => t('Content'),
@@ -82,33 +93,14 @@ function google_analytics_counter_queue_rules_action_info() {
   );
   $items['google_analytics_counter_queue_rules_action_remove_queue_item_for_node'] = array(
     'label' => t('Remove node from queue'),
-    'configurable' => FALSE,
     'group' => t('Google Analytics Counter Queue'),
     'parameter' => array(
-      'node' => array(
-        'type' => 'node',
-        'label' => t('Content'),
-        'save' => FALSE,
+      'queue_type' => array(
+        'type' => 'text',
+        'label' => t('Queue'),
+        'options list' => 'google_analytics_counter_queue_rules_queue_type_list',
+        'description' => t('Select the queue which the queue item will be created in.'),
       ),
-    ),
-  );
-  $items['google_analytics_counter_queue_rules_action_create_priority_queue_item_for_node'] = array(
-    'label' => t('Add node to priority queue'),
-    'configurable' => FALSE,
-    'group' => t('Google Analytics Counter Queue'),
-    'parameter' => array(
-      'node' => array(
-        'type' => 'node',
-        'label' => t('Content'),
-        'save' => FALSE,
-      ),
-    ),
-  );
-  $items['google_analytics_counter_queue_rules_action_remove_priority_queue_item_for_node'] = array(
-    'label' => t('Remove node from priority queue'),
-    'configurable' => FALSE,
-    'group' => t('Google Analytics Counter Queue'),
-    'parameter' => array(
       'node' => array(
         'type' => 'node',
         'label' => t('Content'),
@@ -126,62 +118,70 @@ function google_analytics_counter_queue_rules_action_info() {
  * the path does not already exist within the queue. It is important to note
  * that the item is created for the general queue and not the priority queue.
  *
+ * @param string $queue_type
+ *   The queue's machine name.
+ * @param string $position
+ *   The position identifier (top or bottom).
  * @param object $node
  *   The node object to create a queue item for.
  *
  * @param array $context
  *   Rules action context.
  */
-function google_analytics_counter_queue_rules_action_create_queue_item_for_node($node, array $context = array()) {
-  _google_analytics_counter_queue_rules_action_create_queue_item_for_node(google_analytics_counter_queue_queue(), $node, $context);
-}
-
-function google_analytics_counter_queue_rules_action_create_priority_queue_item_for_node($node, array $context = array()) {
-  _google_analytics_counter_queue_rules_action_create_queue_item_for_node(google_analytics_counter_queue_priority_queue(), $node, $context);
-}
-
-function _google_analytics_counter_queue_rules_action_create_queue_item_for_node($queue, $node, array $context) {
-  // Only create a queue item should it not already exist within the queue.
-  if (!google_analytics_counter_queue_queue_exists_with_path($queue, 'node/' . $node->nid)) {
-    $queue_item = new GoogleAnalyticsCounterQueueQueueItem($queue, NULL, 'node/' . $node->nid);
-    $queue_item->save();
+function google_analytics_counter_queue_rules_action_create_queue_item_for_node($queue_type, $position, $node, array $context = array()) {
+  if ($queue = DrupalQueue::get($queue_type)) {
+    // Only create a queue item should it not already exist within the queue.
+    if (!google_analytics_counter_queue_queue_exists_with_path($queue, 'node/' . $node->nid)) {
+      $queue_item = new GoogleAnalyticsCounterQueueQueueItem($queue, NULL, 'node/' . $node->nid);
+      $queue_item->setWeight(google_analytics_counter_queue_queue_item_next_weight($position, $queue));
+      $queue_item->save();
+    }
   }
 }
 
 /**
  * Callback for deleting a queue item based on the node's path (node/[nid]).
  *
+ * @param string $queue_type
+ *   The queue's machine name.
  * @param object $node
  *   The node object to delete the queue item for if it exists.
  *
  * @param array $context
  *   Rules action context.
  */
-function google_analytics_counter_queue_rules_action_remove_queue_item_for_node($node, array $context = array()) {
-  _google_analytics_counter_queue_rules_action_remove_queue_item_for_node(google_analytics_counter_queue_queue(), $node, $context);
-}
-
-function google_analytics_counter_queue_rules_action_remove_priority_queue_item_for_node($node, array $context = array()) {
-  _google_analytics_counter_queue_rules_action_remove_queue_item_for_node(google_analytics_counter_queue_priority_queue(), $node, $context);
-}
-
-function _google_analytics_counter_queue_rules_action_remove_queue_item_for_node($queue, $node, array $context = array()) {
-  // Select all aliases for this particular node, assuming that the node's
-  // source path is that of the node system path - node/%node.
-  $query = db_select('url_alias', 'a')
-    ->fields('a', array('alias'))
-    ->condition('a.source', 'node/' . $node->nid)
-    ->execute();
-  while ($row = $query->fetchObject()) {
-    // Foreach alias found, attempt to load any queue items which contains
-    // the alias as the core path for processing. If it exists, delete it!
-    if ($queue_item = google_analytics_counter_queue_queue_item_load_by_path($row->alias)) {
+function google_analytics_counter_queue_rules_action_remove_queue_item_for_node($queue_type, $node, array $context = array()) {
+  if ($queue = DrupalQueue::get($queue_type)) {
+    // Select all aliases for this particular node, assuming that the node's
+    // source path is that of the node system path - node/%node.
+    $query = db_select('url_alias', 'a')
+      ->fields('a', array('alias'))
+      ->condition('a.source', 'node/' . $node->nid)
+      ->execute();
+    while ($row = $query->fetchObject()) {
+      // Foreach alias found, attempt to load any queue items which contains
+      // the alias as the core path for processing. If it exists, delete it!
+      if ($queue_item = google_analytics_counter_queue_queue_item_load_by_path($row->alias)) {
+        $queue_item->delete(TRUE);
+      }
+    }
+    // Delete the queue item, should it exists, where the queue item's path is
+    // the node system default (node/%).
+    if ($queue_item = google_analytics_counter_queue_queue_item_load_by_path('node/' . $node->nid)) {
       $queue_item->delete(TRUE);
     }
   }
-  // Delete the queue item, should it exists, where the queue item's path is
-  // the node system default (node/%).
-  if ($queue_item = google_analytics_counter_queue_queue_item_load_by_path('node/' . $node->nid)) {
-    $queue_item->delete(TRUE);
-  }
+}
+
+/**
+ * Returns an array of option containing queue type information for rules.
+ *
+ * @return array
+ *   An associative array of machine_name => label for queue types.
+ */
+function google_analytics_counter_queue_rules_queue_type_list() {
+  return array(
+    'google_analytics_counter_queue' => t('General queue'),
+    'google_analytics_counter_priority_queue' => t('Priority queue'),
+  );
 }
