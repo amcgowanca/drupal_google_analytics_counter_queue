@@ -4,10 +4,19 @@
  * google_analytics_counter_queue.module
  */
 
+if (!function_exists('_anon')) {
+  function _anon() { }
+}
+
 /**
  * Denotes the core and version number (e.g. 7.x-1.0).
  */
 define('GOOGLE_ANALYTICS_COUNTER_QUEUE_VERSION', '7.x-1.0-dev');
+
+/**
+ * Denotes the watchdog type.
+ */
+define('GOOGLE_ANALYTICS_COUNTER_QUEUE_WATCHDOG_TYPE', 'google_analytics_counter_queue');
 
 /**
  * Implements hook_menu().
@@ -172,162 +181,251 @@ function google_analytics_counter_queue_execute_queues_on_cron() {
 }
 
 /**
+ * Wrapper for `watchdog`.
+ *
+ * @param int $severity
+ *   The severity level.
+ * @param string $message
+ *   The message to log.
+ * @param array $variables
+ *   Any variables related to the message for translation.
+ */
+function google_analytics_counter_queue_log($severity, $message, $variables = array()) {
+  watchdog(GOOGLE_ANALYTICS_COUNTER_QUEUE_LOG, $message, $variables, $severity);
+}
+
+/**
+ * Wrapper for the `watchdog_exception`.
+ *
+ * @param Exception $exception
+ *   The exception to log.
+ */
+function google_analytics_counter_queue_log_exception(Exception $exception) {
+  watchdog_exception(GOOGLE_ANALYTICS_COUNTER_QUEUE_WATCHDOG_TYPE, $exception);
+}
+
+/**
  * Queue worker for processing individual queue items.
  *
- * @param object $queue_item
+ * @param mixed $queue_item
  *   The queue item that is to be processed.
  */
 function google_analytics_counter_queue_process_queue($queue_item) {
+  $queue_items = is_array($queue_item) ? $queue_item : array($queue_item);
+
   $client = google_analytics_counter_queue_google_analytics_client();
+
+  $total_records = NULL;
+  $remaining_records = NULL;
+  $pathview_info = array();
+  $error = FALSE;
+  $start_index = NULL;
+
+  do {
+    if ($query = _google_analytics_counter_queue_process_queue_create_query($client, $queue_items, $total_records, $remaining_records, $start_index)) {
+      if ($query->execute() && !$query->getQueryResult()->isEmpty()) {
+        $data = $query->getQueryResult()->getData();
+
+        if ($total_records != $data['totalResults']) {
+          $total_records = $data['totalResults'];
+        }
+
+        if (isset($start_index)) {
+          $remaining_records = $total_records - ($start_index + $data['itemsPerPage']);
+        }
+        elseif ($data['itemsPerPage'] < $total_records) {
+          $remaining_records = $total_records - $data['itemsPerPage'];
+        }
+        elseif ($total_records < $data['itemsPerPage']) {
+          $remaining_records = 0;
+        }
+
+        if (!empty($data['rows'])) {
+          foreach ($data['rows'] as $row) {
+            $ga_pagepath = trim(array_shift($row), '/');
+            $ga_pageviews = array_shift($row);
+
+            $ga_pagepath_info = parse_url($ga_pagepath);
+            if (!empty($ga_pagepath_info['path'])) {
+              $ga_pagepath_info['path'] = strtolower($ga_pagepath_info['path']);
+              if (isset($pathview_info[$ga_pagepath_info['path']]) && FALSE === $pathview_info[$ga_pagepath_info['path']]) {
+                continue;
+              }
+
+              if (google_analytics_counter_queue_valid_path($ga_pagepath_info['path'])) {
+                $drupal_path = drupal_get_normal_path($ga_pagepath_info['path']);
+                if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($drupal_path)) {
+                  continue;
+                }
+
+                $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
+                if (!empty($ignored_paths) && drupal_match_path($ga_pagepath_info['path'], $ignored_paths)) {
+                  continue;
+                }
+
+                if (!isset($pathview_info[$drupal_path])) {
+                  $pathview_info[$drupal_path] = array(
+                    $ga_pagepath_info['path'] => 0,
+                  );
+                }
+
+                $pathview_info[$drupal_path][$ga_pagepath_info['path']] += $ga_pageviews;
+              }
+            }
+          }
+        }
+        else {
+          $error = TRUE;
+        }
+      }
+      else {
+        $error = TRUE;
+      }
+    }
+    else {
+      $error = TRUE;
+    }
+  }
+  while (!$error && ($remaining_records > 0 || NULL === $remaining_records));
+
+  if (!$error && !empty($pathview_info)) {
+    _google_analytics_counter_queue_process_queue_process_statistics($queue_items, $pathview_info);
+  }
+}
+
+/**
+ * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ * @param array $queue_items
+ * @param $total_records
+ * @param $remaining_records
+ * @param $start_index
+ * @return bool|GoogleAnalyticsCounterQueueGoogleAnalyticsApiPagePathViewsQuery
+ */
+function _google_analytics_counter_queue_process_queue_create_query(GoogleAnalyticsCounterQueueGoogleApiClient $client, array &$queue_items, &$total_records, &$remaining_records, &$start_index) {
   $query = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiPagePathViewsQuery($client);
+  $query->setTimeout(120);
   $query->setParameter('ids', 'ga:' . google_analytics_counter_queue_google_analytics_profile_id())
     ->setParameter('dimensions', 'ga:pagePath')
     ->setParameter('metrics', 'ga:pageviews')
     ->setParameter('start-date', google_analytics_counter_queue_google_analytics_data_query_start_date())
     ->setParameter('end-date', date('Y-m-d', strtotime('tomorrow')))
-    ->setParameter('max-results', google_analytics_counter_queue_google_analytics_data_query_max_results())
-    ->setParameter(new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameter('filters',
-        array('ga:pagePath' => array($queue_item->getPath())),
-        new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableFilterableQueryParameterOperatorContains()
-    ));
-  if ($queue_item->getTotalRecords() && $queue_item->getRemainingRecords()) {
-    $difference = $queue_item->getTotalRecords() - $queue_item->getRemainingRecords();
+    ->setParameter('max-results', google_analytics_counter_queue_google_analytics_data_query_max_results());
+  $filter_params = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameter('filters', array(),
+    new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableFilterableQueryParameterOperatorContains()
+  );
+  $value = array();
+  foreach ($queue_items as $item) {
+    $value[] = $item->getPath();
+  }
+  $filter_params->setValue(array('ga:pagePath' => $value));
+  $query->setParameter($filter_params);
+
+  if ($total_records && $remaining_records) {
+    $difference = $total_records - $remaining_records;
     if (0 > $difference) {
-      watchdog(WATCHDOG_DEBUG, t('An unexpected error has occurred where the total number of records minus the total remaining records for processing is less than zero.'));
-      $queue_item->setRemainingRecords(0);
-      return;
+      // TODO: Add log item here.
+      return FALSE;
     }
-    else if (0 < $difference) {
-      $multiple = round($difference / google_analytics_counter_queue_google_analytics_data_query_max_results(), 0);
-      $start_index = google_analytics_counter_queue_google_analytics_data_query_max_results() * $multiple;
-      $start_index = $start_index + 1;
+    elseif (0 < $difference) {
+      $multiplier = round($difference / google_analytics_counter_queue_google_analytics_data_query_max_results(), 0);
+      $start_index = google_analytics_counter_queue_google_analytics_data_query_max_results() * $multiplier;
+      $start_index++;
     }
     else {
       $start_index = 1;
     }
+
     $query->setParameter('start-index', $start_index);
   }
-  $query->execute();
-  $results = $query->getQueryResult();
+  return $query;
+}
 
-  if (!$results->isEmpty()) {
-    $data = $results->getData();
-
-    if (!$queue_item->getTotalRecords() || ($queue_item->getTotalRecords() != $data['totalResults'])) {
-      $queue_item->setTotalRecords($data['totalResults']);
-    }
-
-    if (isset($start_index)) {
-      $queue_item->setRemainingRecords($queue_item->getTotalRecords() - ($start_index + $data['itemsPerPage']));
-      $queue_item->setExpires(0);
-    }
-    elseif ($data['itemsPerPage'] < $queue_item->getTotalRecords()) {
-      $queue_item->setRemainingRecords($queue_item->getTotalRecords() - $data['itemsPerPage']);
-      $queue_item->setExpires(0);
-    }
-
-    $pathviews = array();
-    if (!empty($data['rows'])) {
-      foreach ($data['rows'] as $row) {
-        $ga_pagepath = trim(array_shift($row), '/');
-        $ga_pageviews = array_shift($row);
-
-        $pagepath_info = parse_url($ga_pagepath);
-        if (!empty($pagepath_info['path'])) {
-          $pagepath_info['path'] = strtolower($pagepath_info['path']);
-          if (isset($pathviews[$pagepath_info['path']]) && FALSE === $pathviews[$pagepath_info['path']]) {
-            continue;
-          }
-
-          if (google_analytics_counter_queue_valid_path($pagepath_info['path'])) {
-            $drupal_path = drupal_get_normal_path($pagepath_info['path']);
-            if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($drupal_path)) {
-              continue;
-            }
-
-            $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
-            if (!empty($ignored_paths) && drupal_match_path($pagepath_info['path'], $ignored_paths)) {
-              continue;
-            }
-
-            if (!isset($pathviews[$drupal_path])) {
-              $pathviews[$drupal_path] = array();
-              $pathviews[$drupal_path][$pagepath_info['path']] = 0;
-            }
-            $pathviews[$drupal_path][$pagepath_info['path']] += $ga_pageviews;
-          }
+/**
+ * @param array $queue_items
+ * @param array $pathview_info
+ */
+function _google_analytics_counter_queue_process_queue_process_statistics(array &$queue_items, array &$pathview_info) {
+  foreach ($queue_items as $k => &$queue_item) {
+    $queue_item_normal_path = drupal_get_normal_path($queue_item->getPath());
+    if (isset($pathview_info[$queue_item_normal_path])) {
+      $statistics = google_analytics_counter_queue_statistics_path($queue_item_normal_path);
+      if (!$statistics) {
+        $statistics = _google_analytics_counter_queue_statistics_create($queue_item_normal_path, 0, time());
+        if (FALSE === $statistics) {
+          google_analytics_counter_queue_log(WATCHDOG_NOTICE, 'Unable to load or generate statistics information for queue item @queue_item.', array(
+            '@queue_item' => $queue_item->getIdentifier(),
+          ));
+          continue;
         }
       }
-    }
 
-    if (!empty($pathviews)) {
-      $queue_item_normal_path = drupal_get_normal_path($queue_item->getPath());
-      if (isset($pathviews[$queue_item_normal_path])) {
-        $statistics = google_analytics_counter_queue_statistics_path($queue_item_normal_path);
-        if (!$statistics) {
-          $statistics = _google_analytics_counter_queue_statistics_create($queue_item_normal_path, 0, time());
-          if (FALSE === $statistics) {
-            return; // TODO: Log error.
-          }
+      foreach ($pathview_info[$queue_item_normal_path] as $path => $view_count) {
+        if (FALSE === $view_count) {
+          continue;
         }
 
-        foreach ($pathviews as $normalized_path => $path_variations) {
-          foreach ($path_variations as $path => $view_count) {
-            if (FALSE === $view_count) {
-              continue;
-            }
-
-            if (isset($statistics->items[$path])) {
-              db_update('google_analytics_counter_queue_statistics_path')
-                ->fields(array(
-                  'updated' => time(),
-                  'count' => $view_count,
-                ))
-                ->condition('id', $statistics->items[$path]->id)
-                ->execute();
-            }
-            else {
-              db_insert('google_analytics_counter_queue_statistics_path')
-                ->fields(array(
-                  'created' => time(),
-                  'updated' => time(),
-                  'path' => $path,
-                  'count' => $view_count,
-                  'statistic_id' => $statistics->statistic_id,
-                ))
-                ->execute();
-            }
-          }
-        }
-
-        $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
-          ->condition('p.statistic_id', $statistics->statistic_id);
-        $query->addExpression('SUM(p.count)', 'sum');
-        $sum = $query->execute()
-          ->fetchObject();
-        if (FALSE !== $sum && $sum->sum != $statistics->totalcount) {
-          $timestamp = time();
-          db_update('google_analytics_counter_queue_statistics')
+        if (isset($statistics->items[$path])) {
+          db_update('google_analytics_counter_queue_statistics_path')
             ->fields(array(
-              'totalcount' => $sum->sum,
-              'updated' => $timestamp,
+              'updated' => time(),
+              'count' => $view_count,
             ))
-            ->condition('statistic_id', $statistics->statistic_id)
+            ->condition('id', $statistics->items[$path]->id)
             ->execute();
-          // Reset the static cached statistics for this path and reload.
-          $statistics = google_analytics_counter_queue_statistics_path($statistics->path, TRUE);
+          $statistics->items[$path]->count = $view_count;
         }
-        $queue_item->setProcessedState(TRUE);
-        module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, $statistics);
+        else {
+          $fields = array(
+            'created' => time(),
+            'updated' => time(),
+            'path' => $path,
+            'count' => $view_count,
+            'statistic_id' => $statistics->statistic_id,
+          );
+
+          $id = db_insert('google_analytics_counter_queue_statistics_path')
+            ->fields($fields)
+            ->execute();
+          $fields['id'] = $id;
+          $statistics->items[$path] = (object) $fields;
+        }
       }
-    }
-    else {
+
+      // We perform a query to retrieve the sum as it calculating at runtime
+      // with the above processing might not always be successful due to
+      // additional path specific statistic information existing that was not
+      // processed above.
+      $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
+        ->condition('p.statistic_id', $statistics->statistic_id);
+      $query->addExpression('SUM(p.count)', 'sum');
+      $sum = $query->execute()
+        ->fetchObject();
+      // Assuming the sum calculation was successful and the current total
+      // number of views is not the same, we will update the aggregated
+      // total number of views.
+      if (FALSE !== $sum && $sum->sum != $statistics->totalcount) {
+        $timestamp = time();
+        db_update('google_analytics_counter_queue_statistics')
+          ->fields(array(
+            'totalcount' => $sum->sum,
+            'updated' => $timestamp,
+          ))
+          ->condition('statistic_id', $statistics->statistic_id)
+          ->execute();
+        // Update the static cache of the statistical information objects.
+        $statistics->updated = $timestamp;
+        $statistics->totalcount = $sum->sum;
+        $statistic_info = &drupal_static('google_analytics_counter_queue_statistics_path', array());
+        $statistic_info[$statistics->path] = $statistics;
+      }
+      // Set processed state to TRUE, allowing for the queue item deletion.
       $queue_item->setProcessedState(TRUE);
-      module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, NULL);
+      // This module hook invocation is potentially problematic because of
+      // the potential to have large number of queue items to process. Should
+      // the implementer perform extensive operations, this could result in
+      // degradation of performance.
+      module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, $statistics);
     }
-  }
-  else {
-    $queue_item->setAttempts($queue_item->getAttempts() + 1);
   }
 }
 
@@ -762,6 +860,8 @@ function google_analytics_counter_queue_valid_path($path) {
 }
 
 /**
+ *
+ *
  * @param $path
  * @return mixed
  */
@@ -1161,6 +1261,10 @@ function google_analytics_counter_queue_process_queue_batch_op($item_id, &$conte
   return TRUE;
 }
 
+function google_analytics_counter_queue_queue_process_multiple() {
+  return variable_get('google_analytics_counter_queue_queue_process_multiple', 1);
+}
+
 /**
  * Implements hook_google_analytics_counter_queue_queue_item_insert().
  */
@@ -1211,7 +1315,7 @@ function statistics_google_analytics_counter_queue_queue_item_processed(GoogleAn
             'timestamp' => time(),
           ))
           ->execute();
-        watchdog(WATCHDOG_DEBUG, t("Updated Drupal core statistics' {node_counter} table for node @node_id.", array('@node_id' => $node_id)));
+        google_analytics_counter_queue_log(WATCHDOG_DEBUG, "Updated Drupal core statistics' {node_counter} table for node @node_id.", array('@node_id' => $node_id));
       }
     }
   }

@@ -71,6 +71,19 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
     ),
     '#default_value' => google_analytics_counter_queue_google_analytics_queue_item_threshold(),
   );
+  $form['settings']['google_analytics_counter_queue_queue_process_multiple'] = array(
+    '#type' => 'select',
+    '#title' => t('Multiple queue item processing'),
+    '#description' => t('The number of queue items to process at once. <em>Note: This configuration is only used for the custom drush queue processing command implemented by Google Analytics Counter Queue.</em>'),
+    '#options' => array(
+      '1' => '1',
+      '2' => '2',
+      '3' => '3',
+      '5' => '5',
+      '10' => '10',
+    ),
+    '#default_value' => google_analytics_counter_queue_queue_process_multiple(),
+  );
   $form['settings']['google_analytics_counter_queue_google_analytics_data_query_max_results'] = array(
     '#type' => 'select',
     '#title' => t('Maximum number of results'),

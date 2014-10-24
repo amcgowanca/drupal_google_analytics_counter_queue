@@ -31,10 +31,10 @@ function hook_google_analytics_counter_queue_xoauth_display_name_alter(&$display
  *   The queue item which was created.
  */
 function hook_google_analytics_counter_queue_queue_item_insert(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  watchdog(WATCHDOG_DEBUG, t('New queue item created in @queue with id @id.', array(
+  google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'New queue item created in @queue with id @id.', array(
     '@queue' => $queue_item->getQueue()->getName(),
     '@id' => $queue_item->getIdentifier(),
-  )));
+  ));
 }
 
 /**
@@ -42,7 +42,7 @@ function hook_google_analytics_counter_queue_queue_item_insert(GoogleAnalyticsCo
  *   The updated queue item.
  */
 function hook_google_analytics_counter_queue_queue_item_update(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  watchdog(WATCHDOG_DEBUG, t('Queue item @id has been updated.', array('@id' => $queue_item->getIdentifier())));
+  google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Queue item @id has been updated.', array('@id' => $queue_item->getIdentifier()));
 }
 
 /**
@@ -50,7 +50,7 @@ function hook_google_analytics_counter_queue_queue_item_update(GoogleAnalyticsCo
  *   The deleted queue item.
  */
 function hook_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  watchdog(WATCHDOG_DEBUG, t('Queue item @id has been deleted from queue @queue.', array('@id' => $queue_item->getIdentifier(), '@queue' => $queue_item->getQueue()->getName())));
+  google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Queue item @id has been deleted from queue @queue.', array('@id' => $queue_item->getIdentifier(), '@queue' => $queue_item->getQueue()->getName()));
 }
 
 /**
@@ -62,5 +62,5 @@ function hook_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCo
  *   however, no statistical information was collected as it did not exist.
  */
 function hook_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics = NULL) {
-  watchdog(WATCHDOG_DEBUG, t('Queue item @id has been processed.', array('@id' => $queue_item->getIdentifier())));
+  google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Queue item @id has been processed.', array('@id' => $queue_item->getIdentifier()));
 }

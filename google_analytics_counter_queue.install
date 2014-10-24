@@ -21,6 +21,7 @@ function google_analytics_counter_queue_install() {
   variable_set('google_analytics_counter_queue_queue_ignored_paths', implode("\n", array('node/*/edit')));
   variable_set('google_analytics_counter_queue_queue_process_admin_paths', 0);
   variable_set('google_analytics_counter_queue_google_analytics_data_query_start_date', '2005-01-01');
+  variable_set('google_analytics_counter_queue_queue_process_multiple', 1);
   // Drupal's queue API requires that any custom implemented queue classes are
   // defined as variables, allowing the queue class to be retrieved dynamically
   // using the variable `queue_class_{queue_name}`. This is primarily used
@@ -51,6 +52,7 @@ function google_analytics_counter_queue_uninstall() {
   variable_del('google_analytics_counter_queue_queue_ignored_paths');
   variable_del('google_analytics_counter_queue_queue_process_admin_paths');
   variable_del('google_analytics_counter_queue_google_analytics_data_query_start_date');
+  variable_del('google_analytics_counter_queue_queue_process_multiple');
   // Delete Drupal core's queue related variables to perform complete cleanup.
   variable_del('queue_class_google_analytics_counter_queue');
   variable_del('queue_class_google_analytics_counter_priority_queue');

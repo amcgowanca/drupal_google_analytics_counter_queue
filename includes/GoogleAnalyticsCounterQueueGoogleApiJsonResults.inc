@@ -10,6 +10,7 @@ class GoogleAnalyticsCounterQueueGoogleApiJsonResults extends GoogleAnalyticsCou
     if (JSON_ERROR_NONE == json_last_error()) {
       return parent::setData($decoded);
     }
+
     throw new InvalidArgumentException(t('Expected JSON string as parameter one.'));
   }
 }

@@ -6,7 +6,6 @@ version = GOOGLE_ANALYTICS_COUNTER_QUEUE_VERSION
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiAuthentication.inc
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiClient.inc
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiQuery.inc
-files[] = includes/GoogleAnalyticsCounterQueueGoogleApiQueryCache.inc
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiResults.inc
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiJsonResults.inc
 files[] = includes/GoogleAnalyticsCounterQueueGoogleAnalyticsApiQuery.inc

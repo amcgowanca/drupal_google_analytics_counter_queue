@@ -19,7 +19,7 @@ function google_analytics_counter_queue_drush_command() {
       'queue_name' => 'The name of the queue.',
     ),
     'options' => array(
-      'total-items' => 'Total number of items to process at a single time.',
+      'multiple' => 'Process multiple queue items at once.'
     ),
     'required-arguments' => 1,
   );
@@ -31,7 +31,7 @@ function google_analytics_counter_queue_drush_command() {
     'required-arguments' => 1,
   );
   $commands['google-analytics-counter-queue-reset-statistics'] = array(
-    'description' => 'Truncates the statistic related database tables.',
+    'description' => 'Truncates the statistics database tables.',
   );
   return $commands;
 }
@@ -46,6 +46,15 @@ function drush_google_analytics_counter_queue_oauth_revoke_token() {
 }
 
 /**
+ * Drush callback for processing a single queue, specified by its name.
+ *
+ * When the `--multiple` option exists, it may exist as a boolean (without a
+ * value) and therefore is used to determine whether or not queue items
+ * are processed together. When no value exists, the variable named
+ * `google_analytics_counter_queue_queue_process_multiple` is used to determine
+ * the number of queue items to group together. The number of items to group
+ * can be overridden by specifying a numeric value of the `--multiple` option.
+ *
  * @param string $queue_name
  *   The name of the queue to process items on.
  */
@@ -54,17 +63,33 @@ function drush_google_analytics_counter_queue_run($queue_name = '') {
     return drush_log(dt('The specified queue name, @queue, is not defined by Google Analytics Counter Queue.', array('@queue' => $queue_name)), 'error');
   }
 
-  drush_print(dt('Running queue @queue', array('@queue' => $queue_name)));
-
   $queue = DrupalQueue::get($queue_name);
-  while ($item = $queue->claimItem()) {
-    google_analytics_counter_queue_process_queue($item);
-    $queue->deleteItem($item);
+  if (drush_get_option('multiple', FALSE)) {
+    $i = 0;
+    $items = array();
+    $multiple = (int) drush_get_option('multiple', google_analytics_counter_queue_queue_process_multiple());
+    while (($item = $queue->claimItem()) && $i < $multiple) {
+      $items[] = $item;
+      $i++;
+    }
+
+    google_analytics_counter_queue_process_queue($items);
+
+    while ($item = array_pop($items)) {
+      $queue->deleteItem($item);
+    }
+  }
+  else {
+    // TODO: Add time, option to ignore.
+    while ($item = $queue->claimItem()) {
+      google_analytics_counter_queue_process_queue($item);
+      $queue->deleteItem($item);
+    }
   }
 }
 
 /**
- *
+ * Truncates the statistic related database tables.
  */
 function drush_google_analytics_counter_queue_reset_statistics() {
   foreach (array('google_analytics_counter_queue_statistics', 'google_analytics_counter_queue_statistics_path') as $table) {

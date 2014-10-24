@@ -162,15 +162,15 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
     }
 
     if (!$force_delete && (!$item->getProcessedState() && $item->getAttempts() < google_analytics_counter_queue_google_analytics_queue_item_threshold())) {
-      watchdog(WATCHDOG_DEBUG, t('Attempt to delete queue item @queue; attempts to process is less than threshold.', array(
+      google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Attempt to delete queue item @queue; attempts to process is less than threshold.', array(
         '@queue' => $item->getIdentifier(),
-      )));
+      ));
       $item->save();
       return;
     }
 
     if (!$force_delete && ($item->getTotalRecords() && $item->getRemainingRecords())) {
-      watchdog(WATCHDOG_DEBUG, t('Attempt to delete a queue item which has records remaining; saving records instead.'));
+      google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Attempt to delete a queue item which has records remaining; saving records instead.');
       $item->save();
       return;
     }

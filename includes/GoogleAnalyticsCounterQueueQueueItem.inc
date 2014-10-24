@@ -34,6 +34,9 @@ class GoogleAnalyticsCounterQueueQueueItem {
    * @param int $item_id
    *   The queue item's identifier.
    *
+   * @param array $conditions
+   *   An array of conditions for matching properties of the queue item to load.
+   *
    * @return GoogleAnalyticsCounterQueueQueueItem
    *   Returns the queue item instance if exists otherwise returns FALSE.
    */
@@ -68,8 +71,8 @@ class GoogleAnalyticsCounterQueueQueueItem {
    * @param GoogleAnalyticsCounterQueueQueue $queue
    *   The queue object to build the query for.
    *
-   * @param int $item_id
-   *   The queue item identifier to load.
+   * @param array $conditions
+   *   An array of conditions for matching properties of the queue item to load.
    *
    * @return SelectQuery
    *   The SelectQuery instance for the `$queue`'s table and fields.
@@ -348,7 +351,7 @@ class GoogleAnalyticsCounterQueueQueueItem {
       db_ignore_slave();
     }
     catch (Exception $exception) {
-      watchdog_exception('google_analytics_counter_queue', $exception);
+      google_analytics_counter_queue_log_exception($exception);
       $transaction->rollback();
       throw $exception;
     }
