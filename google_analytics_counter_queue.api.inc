@@ -64,3 +64,7 @@ function hook_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCo
 function hook_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics = NULL) {
   google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Queue item @id has been processed.', array('@id' => $queue_item->getIdentifier()));
 }
+
+function hook_google_analytics_counter_queue_statistic_overview_info_alter(array &$statistics_info, array &$statistics_info_header) {
+  // TODO: Add a basic example.
+}

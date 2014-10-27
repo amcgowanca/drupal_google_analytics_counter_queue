@@ -4,6 +4,7 @@
  * google_analytics_counter_queue.module
  */
 
+// TODO: Remove prior to release.
 if (!function_exists('_anon')) {
   function _anon() { }
 }
@@ -85,10 +86,39 @@ function google_analytics_counter_queue_menu() {
     'file path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/includes',
     'weight' => 2,
   );
+  $items['admin/config/system/google-analytics-counter-queue/statistics'] = array(
+    'title' => 'Statistics',
+    'type' => MENU_LOCAL_TASK,
+    'description' => '',
+    'access arguments' => array('administer google analytics counter queue'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('google_analytics_counter_queue_admin_statistics'),
+    'file' => 'google_analytics_counter_queue.admin.inc',
+    'file path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/includes',
+    'weight' => 3,
+  );
+  $items['admin/config/system/google-analytics-counter-queue/statistics/%google_analytics_counter_queue_statistic/view'] = array(
+    'title' => 'View statistic',
+    'type' => MENU_LOCAL_TASK,
+    'context' => MENU_CONTEXT_INLINE,
+    'description' => 'View statistical information for an individual statistic record.',
+    'access arguments' => array('administer google analytics counter queue'),
+    'page callback' => 'google_analytics_counter_queue_statistic_view_page',
+    'page arguments' => array(5),
+  );
+  $items['admin/config/system/google-analytics-counter-queue/statistics/%google_analytics_counter_queue_statistic/delete'] = array(
+    'title' => 'Delete statistic',
+    'type' => MENU_LOCAL_TASK,
+    'context' => MENU_CONTEXT_INLINE,
+    'description' => 'Delete statistical information for an individual statistic record.',
+    'access arguments' => array('administer google analytics counter queue'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('google_analytics_counter_queue_statistic_delete_confirm', 5),
+  );
   $items['google-analytics-counter-queue/oauth'] = array(
     'title' => 'OAuth callback endpoint',
     'type' => MENU_CALLBACK,
-    'description' => '',
+    'description' => 'Callback for the OAuth authentication with Google Analytics.',
     'page callback' => 'google_analytics_counter_queue_oauth_callback',
     'access callback' => TRUE,
   );
@@ -105,6 +135,9 @@ function google_analytics_counter_queue_admin_paths() {
     'admin/config/system/google-analytics-counter-queue/queue/item/add' => TRUE,
     'admin/config/system/google-analytics-counter-queue/queue/item/*/edit' => TRUE,
     'admin/config/system/google-analytics-counter-queue/queue/item/*/delete' => TRUE,
+    'admin/config/system/google-analytics-counter-queue/statistics' => TRUE,
+    'admin/config/system/google-analytics-counter-queue/statistics/*/edit' => TRUE,
+    'admin/config/system/google-analytics-counter-queue/statistics/*/delete' => TRUE,
   );
 }
 
@@ -157,6 +190,7 @@ function google_analytics_counter_queue_element_info() {
  */
 function google_analytics_counter_queue_cron_queue_info() {
   $queues = array();
+  // TODO: Investigate an alternative method.
   if (google_analytics_counter_queue_execute_queues_on_cron()) {
     $queues['google_analytics_counter_queue'] = array(
       'worker callback' => 'google_analytics_counter_queue_process_queue',
@@ -211,6 +245,12 @@ function google_analytics_counter_queue_log_exception(Exception $exception) {
  *   The queue item that is to be processed.
  */
 function google_analytics_counter_queue_process_queue($queue_item) {
+  // Lock this process for a maximum of 15 minutes (900 seconds).
+  // TODO: Revisit for cleanup and documentation around why locking and where the lock_release is placed.
+  if (!lock_acquire('google_analytics_counter_queue_process_queue', 900.0)) {
+    return;
+  }
+
   $queue_items = is_array($queue_item) ? $queue_item : array($queue_item);
 
   $client = google_analytics_counter_queue_google_analytics_client();
@@ -288,6 +328,8 @@ function google_analytics_counter_queue_process_queue($queue_item) {
   }
   while (!$error && ($remaining_records > 0 || NULL === $remaining_records));
 
+  lock_release('google_analytics_counter_queue_process_queue');
+
   if (!$error && !empty($pathview_info)) {
     _google_analytics_counter_queue_process_queue_process_statistics($queue_items, $pathview_info);
   }
@@ -310,9 +352,12 @@ function _google_analytics_counter_queue_process_queue_create_query(GoogleAnalyt
     ->setParameter('start-date', google_analytics_counter_queue_google_analytics_data_query_start_date())
     ->setParameter('end-date', date('Y-m-d', strtotime('tomorrow')))
     ->setParameter('max-results', google_analytics_counter_queue_google_analytics_data_query_max_results());
+  // Create an instance for our `filters` parameter which will set after initial
+  // path processing for queue item(s) are aggregated into a single array.
   $filter_params = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameter('filters', array(),
     new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableFilterableQueryParameterOperatorContains()
   );
+
   $value = array();
   foreach ($queue_items as $item) {
     $value[] = $item->getPath();
@@ -1359,20 +1404,191 @@ function node_google_analytics_counter_queue_google_analytics_api_query_alter(Go
  *   any URL aliases that might exist for it.
  */
 function _node_google_analytics_counter_queue_generate_node_aliases_for_node_system_path(&$path) {
-  if (preg_match('|node/([0-9]+)?|', $path, $matches)) {
-    $node_id = isset($matches[1]) ? $matches[1] : NULL;
+  if ($node_id = google_analytics_counter_queue_path_is_node_view($path)) {
     $original = $path;
-    if (is_numeric($node_id)) {
-      $node_id = intval($node_id);
-      $path = array($path);
+    $path = array($path);
+    $query = db_select('url_alias', 'a')
+      ->fields('a', array('alias'))
+      ->condition('a.source', 'node/' . $node_id)
+      ->execute();
+    while ($row = $query->fetchObject()) {
+      $path[] = $row->alias;
+    }
+  }
+}
 
-      $query = db_select('url_alias', 'a')
-        ->fields('a', array('alias'))
-        ->condition('a.source', 'node/' . $node_id)
-        ->execute();
-      while ($row = $query->fetchObject()) {
-        $path[] = $row->alias;
+/**
+ * Implements hook_google_analytics_counter_queue_statistics_overview_alter().
+ */
+function node_google_analytics_counter_queue_statistics_overview_alter(&$statistic_rows, &$statistic_headers) {
+  if (!empty($statistic_rows)) {
+    foreach ($statistic_rows as $statistic_id => &$statistic) {
+      if ($node_id = google_analytics_counter_queue_path_is_node_view($statistic['#statistic']->path)) {
+        $node = node_load($node_id);
+        $statistic['path']['data']['#title'] = format_string('!title  (!path)', array(
+          '!title' => $node->title,
+          '!path' => $statistic['#statistic']->path,
+        ));
       }
     }
+  }
+}
+
+/**
+ * Returns the node identifier should the path be a node viewing path.
+ *
+ * Note: This function returns FALSE for all node action or local task paths
+ * such as node/[nid]/edit.
+ *
+ * Furthermore, a node alias may be specified as $path which will perform a path
+ * normalization allowing for the node system path to be retrieved and parsed.
+ *
+ * @param string $path
+ *   The path to attempt to retrieve the node id for.
+ *
+ * @return mixed
+ *   Returns the node id as an integer, otherwise FALSE.
+ */
+function google_analytics_counter_queue_path_is_node_view($path) {
+  $path = drupal_get_normal_path($path);
+  if (preg_match('|node/([0-9]+)?|', $path, $matches)) {
+    return isset($matches[1]) && is_numeric($matches[1]) ? intval($matches[1]) : FALSE;
+  }
+  return FALSE;
+}
+
+/**
+ * @param $statistic
+ * @return string
+ */
+function google_analytics_counter_queue_statistic_view_page($statistic) {
+  drupal_set_title(t('<em>View statistics for</em> @path', array('@path' => $statistic->path)), PASS_THROUGH);
+
+  $statistics_info_header = array(
+    'label' => array('data' => t('Label'), 'class' => array('invisible')),
+    'value' => array('data' => t('Value'), 'class' => array('invisible')),
+  );
+
+  $statistics_info_rows = array(
+    'totalcount' => array(
+      'label' => array('data' => array(
+        '#markup' => t('Total count'),
+        '#prefix' => '<strong>',
+        '#suffix' => '</strong>',
+      )),
+      'value' => array('data' => $statistic->totalcount),
+    ),
+    'number_of_paths' => array(
+      'label' => array('data' => array(
+        '#markup' => t('Number of paths'),
+        '#prefix' => '<strong>',
+        '#suffix' => '</strong>',
+      )),
+      'value' => array('data' => count($statistic->items)),
+    ),
+  );
+
+  drupal_alter('google_analytics_counter_queue_statistic_overview_info', $statistics_info_rows, $statistics_info_header, $statistic);
+
+  $statistics_by_path_rows = array();
+  foreach ($statistic->items as $item) {
+    $statistics_by_path_rows[] = array(
+      'path' => array('data' => $item->path),
+      'views' => array('data' => $item->count)
+    );
+  }
+
+  $render = array(
+    'statistical_info' => array(
+      '#type' => 'table',
+      '#header' => $statistics_info_header,
+      '#rows' => $statistics_info_rows,
+      '#prefix' => theme('html_tag', array(
+        'element' => array(
+          '#tag' => 'h2',
+          '#value' => t('Information'),
+        ),
+      )),
+    ),
+    'statistics_by_paths' => array(
+      '#type' => 'table',
+      '#header' => array(
+        'path' => array('data' => t('Path')),
+        'views' => array('data' => t('Page views')),
+      ),
+      '#rows' => $statistics_by_path_rows,
+      '#prefix' => theme('html_tag', array(
+        'element' => array(
+         '#tag' => 'h2',
+         '#value' => t('Statistics by path'),
+        ),
+      )),
+    ),
+  );
+  return $render;
+}
+
+/**
+ * @param $form
+ * @param $form_state
+ * @param $statistic
+ * @return mixed
+ */
+function google_analytics_counter_queue_statistic_delete_confirm($form, &$form_state, $statistic) {
+  $form['statistic_id'] = array(
+    '#type' => 'value',
+    '#value' => $statistic->statistic_id,
+  );
+  return confirm_form($form, t('Are you sure you want to delete the statistical information for %path?', array('%path' => $statistic->path)), 'admin/config/system/google-analytics-counter-queue/statistics', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
+}
+
+function google_analytics_counter_queue_statistic_delete_confirm_submit($form, &$form_state) {
+  if ($form_state['values']['confirm']) {
+    $statistic = google_analytics_counter_queue_statistic_load($form_state['values']['statistic_id']);
+    google_analytics_counter_queue_statistic_delete($form_state['values']['statistic_id']);
+    drupal_set_message(t('You have successfully deleted statistic information for path %path.', array(
+      '%path' => $statistic->path,
+    )));
+    drupal_goto('admin/config/system/google-analytics-counter-queue/statistics');
+  }
+}
+
+function google_analytics_counter_queue_statistic_load($statistic_id) {
+  // TODO: Re-implement so that it shares data or common implementation with that of google_analytics_coutner_queue_statistics_path().
+  $static_fast_cache = &drupal_static('google_analytics_counter_queue_statistics', array());
+  if (!isset($static_fast_cache[$statistic_id])) {
+    $query = db_select('google_analytics_counter_queue_statistics', 's')
+      ->fields('s')
+      ->condition('s.statistic_id', $statistic_id)
+      ->execute();
+    if ($row = $query->fetchObject()) {
+      $row->items = array();
+      $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
+        ->fields('p')
+        ->condition('p.statistic_id', $row->statistic_id)
+        ->execute();
+      while ($item = $query->fetchObject()) {
+        $row->items[$item->id] = $item;
+      }
+      $static_fast_cache[$row->statistic_id] = $row;
+    }
+    else {
+      $static_fast_cache[$statistic_id] = FALSE;
+    }
+  }
+  return $static_fast_cache[$statistic_id];
+}
+
+function google_analytics_counter_queue_statistic_delete($statistic_id) {
+  // TODO: Probably wrap this in a try-catch?
+  db_delete('google_analytics_counter_queue_statistics_path')
+    ->condition('statistic_id', $statistic_id)
+    ->execute();
+  db_delete('google_analytics_counter_queue_statistics')
+    ->condition('statistic_id', $statistic_id)
+    ->execute();
+  $static_fast_cache = &drupal_static('google_analytics_counter_queue_statistics', array());
+  if (isset($static_fast_cache[$statistic_id])) {
+    unset($static_fast_cache[$statistic_id]);
   }
 }

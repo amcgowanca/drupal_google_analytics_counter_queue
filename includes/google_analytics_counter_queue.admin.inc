@@ -453,3 +453,138 @@ function google_analytics_counter_queue_admin_authentication_form_submit($form, 
       break;
   }
 }
+
+function google_analytics_counter_queue_admin_statistics_delete_multiple_confirm($form, &$form_state, $statistics) {
+  $form['statistics'] = array(
+    '#tree' => TRUE,
+    '#prefix' => '<ul>',
+    '#suffix' => '</ul>',
+  );
+  foreach ($statistics as $statistic_id) {
+    $statistic = google_analytics_counter_queue_statistic_load($statistic_id);
+    $form['statistics'][$statistic_id] = array(
+      '#type' => 'hidden',
+      '#value' => $statistic_id,
+      '#prefix' => '<li>',
+      '#suffix' => t('<em>@path</em>', array('@path' => $statistic->path)) . '</li>',
+    );
+  }
+
+  $form['operation'] = array(
+    '#type' => 'hidden',
+    '#value' => 'delete',
+  );
+
+  $form['#submit'][] = 'google_analytics_counter_queue_admin_statistics_delete_multiple_confirm_submit';
+  $confirm_question = format_plural(count($statistics), 'Are you sure you want to delete the statistical information for this path?', 'Are you sure you want to delete the statistical information for these paths?');
+  return confirm_form($form, $confirm_question, 'admin/config/system/google-analytics-counter-queue/statistics', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
+}
+
+function google_analytics_counter_queue_admin_statistics_delete_multiple_confirm_submit($form, &$form_state) {
+  if ($form_state['values']['confirm']) {
+    foreach ($form_state['values']['statistics'] as $statistic_id) {
+      google_analytics_counter_queue_statistic_delete($statistic_id);
+    }
+
+    drupal_set_message(t('You have successfully deleted all selected statistics.'));
+    $form_state['redirect'] = 'admin/config/system/google-analytics-counter-queue/statistics';
+  }
+}
+
+function google_analytics_counter_queue_admin_statistics($form, &$form_state) {
+  if (isset($form_state['values']['op']) && in_array($form_state['values']['op'], array(t('Update'), t('Delete'))) && isset($form_state['values']['operation']) && 'delete' == $form_state['values']['operation'] && !empty($form_state['values']['statistics'])) {
+    return google_analytics_counter_queue_admin_statistics_delete_multiple_confirm($form, $form_state, array_filter($form_state['values']['statistics']));
+  }
+
+  $form['options'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Update options'),
+    '#attributes' => array('class' => array('container-inline')),
+  );
+  $form['options']['operation'] = array(
+    '#type' => 'select',
+    '#title' => t('Operation'),
+    '#title_display' => 'invisible',
+    '#options' => array(
+      'delete' => t('Delete selected items'),
+    ),
+  );
+  $form['options']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Update'),
+  );
+
+  $statistic_headers = array(
+    'path' => array('data' => t('Path'), 'weight' => 1),
+    'totalcount' => array('data' => t('Total count'), 'weight' => 2),
+    'updated' => array('data' => t('Last updated'), 'sort' => 'desc', 'weight' => 3),
+    'operations' => array('data' => t('Operations'), 'weight' => 4),
+  );
+
+  $statistic_rows = array();
+  $query = db_select('google_analytics_counter_queue_statistics', 's')->extend('PagerDefault');
+  $query->join('google_analytics_counter_queue_statistics_path', 'sp', 's.statistic_id = sp.statistic_id');
+  $query = $query->fields('s')
+    ->limit(25)
+    ->orderBy('s.updated', 'DESC')
+    ->orderBy('s.totalcount', 'ASC')
+    ->execute();
+  while ($row = $query->fetchObject()) {
+    $operation_href_prefix = 'admin/config/system/google-analytics-counter-queue/statistics/' . $row->statistic_id;
+    $operations = array(
+      'view' => array(
+        'title' => t('view'),
+        'href' => $operation_href_prefix . '/view',
+      ),
+      'delete' => array(
+        'title' => t('delete'),
+        'href' => $operation_href_prefix . '/delete',
+        'options' => array(
+          'query' => array(
+            'destination' => current_path(),
+          ),
+        ),
+      ),
+    );
+
+    $statistic_rows[$row->statistic_id] = array(
+      '#statistic' => $row,
+      'path' => array(
+        'data' => array(
+          '#type' => 'link',
+          '#title' => $row->path,
+          '#href' => $row->path,
+        ),
+      ),
+      'totalcount' => array('data' => $row->totalcount),
+      'updated' => array('data' => format_date($row->updated, 'custom', 'D, M. d, Y @ g:i a')),
+      'operations' => array('data' => array(
+        '#theme' => 'links',
+        '#links' => $operations,
+        '#attributes' => array('class' => array('links', 'inline')),
+      )),
+    );
+  }
+  // Allow for other modules to alter the table related data prior to sorting
+  // and rendering. This allows for things like node paths to be translated into
+  // the respective node titles.
+  drupal_alter('google_analytics_counter_queue_statistics_overview', $statistic_rows, $statistic_headers);
+  // Sort the headers for the tableselect as they may have been altered and
+  // therefore the weights may have changed.
+  uasort($statistic_headers, 'drupal_sort_weight');
+
+  $form['statistics'] = array(
+    '#type' => 'tableselect',
+    '#header' => $statistic_headers,
+    '#options' => $statistic_rows,
+    '#empty' => t('There is currently no statistics.'),
+  );
+
+  $form['pager'] = array('#markup' => theme('pager'));
+
+  return $form;
+}
+
+function google_analytics_counter_queue_admin_statistics_submit($form, &$form_state) {
+  $form_state['rebuild'] = TRUE;
+}
