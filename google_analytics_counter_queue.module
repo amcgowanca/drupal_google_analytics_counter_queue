@@ -190,17 +190,17 @@ function google_analytics_counter_queue_element_info() {
  */
 function google_analytics_counter_queue_cron_queue_info() {
   $queues = array();
-  // TODO: Investigate an alternative method.
-  if (google_analytics_counter_queue_execute_queues_on_cron()) {
-    $queues['google_analytics_counter_queue'] = array(
-      'worker callback' => 'google_analytics_counter_queue_process_queue',
-      'time' => 30,
-    );
-    $queues['google_analytics_counter_priority_queue'] = array(
-      'worker callback' => 'google_analytics_counter_queue_process_queue',
-      'time' => 120,
-    );
-  }
+  $skip_on_cron = !((bool) google_analytics_counter_queue_execute_queues_on_cron());
+  $queues['google_analytics_counter_queue'] = array(
+    'worker callback' => 'google_analytics_counter_queue_process_queue',
+    'time' => 30,
+    'skip on cron' => $skip_on_cron,
+  );
+  $queues['google_analytics_counter_priority_queue'] = array(
+    'worker callback' => 'google_analytics_counter_queue_process_queue',
+    'time' => 120,
+    'skip on cron' => $skip_on_cron,
+  );
   return $queues;
 }
 
