@@ -4,11 +4,6 @@
  * google_analytics_counter_queue.module
  */
 
-// TODO: Remove prior to release.
-if (!function_exists('_anon')) {
-  function _anon() { }
-}
-
 /**
  * Denotes the core and version number (e.g. 7.x-1.0).
  */
@@ -18,6 +13,19 @@ define('GOOGLE_ANALYTICS_COUNTER_QUEUE_VERSION', '7.x-1.0-dev');
  * Denotes the watchdog type.
  */
 define('GOOGLE_ANALYTICS_COUNTER_QUEUE_WATCHDOG_TYPE', 'google_analytics_counter_queue');
+
+/**
+ * Denotes the HTTP POST method type.
+ */
+define('GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_POST', 'POST');
+
+/**
+ * Denotes the HTTP GET method type.
+ */
+define('GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_GET', 'GET');
+
+// Include the statistics related functionality.
+require_once 'google_analytics_counter_queue.statistics.inc';
 
 /**
  * Implements hook_menu().
@@ -31,7 +39,6 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_admin_settings_form'),
     'file' => 'google_analytics_counter_queue.admin.inc',
-    'file path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/includes',
   );
   $items['admin/config/system/google-analytics-counter-queue/settings'] = array(
     'title' => 'Settings',
@@ -46,7 +53,6 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_admin_priority_queue'),
     'file' => 'google_analytics_counter_queue.admin.inc',
-    'file path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/includes',
     'weight' => 3,
   );
   $items['admin/config/system/google-analytics-counter-queue/priority-queue/add'] = array(
@@ -83,7 +89,6 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_admin_authentication_form'),
     'file' => 'google_analytics_counter_queue.admin.inc',
-    'file path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/includes',
     'weight' => 2,
   );
   $items['admin/config/system/google-analytics-counter-queue/statistics'] = array(
@@ -94,7 +99,6 @@ function google_analytics_counter_queue_menu() {
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_admin_statistics'),
     'file' => 'google_analytics_counter_queue.admin.inc',
-    'file path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/includes',
     'weight' => 3,
   );
   $items['admin/config/system/google-analytics-counter-queue/statistics/%google_analytics_counter_queue_statistic/view'] = array(
@@ -205,13 +209,39 @@ function google_analytics_counter_queue_cron_queue_info() {
 }
 
 /**
- * Returns a boolean indicating whether the queue should be processed on cron.
  *
- * @return boolean
- *   Returns TRUE if the queue should be processed during cron, otherwise FALSE.
  */
-function google_analytics_counter_queue_execute_queues_on_cron() {
-  return variable_get('google_analytics_counter_queue_execute_queues_on_cron', TRUE);
+function google_analytics_counter_queue_module_include() {
+  ctools_include('plugins');
+  ctools_plugin_api_include('google_analytics_counter_queue',
+    'google_analytics_counter_queue',
+    google_analytics_counter_queue_api_version(),
+    google_analytics_counter_queue_api_version()
+  );
+}
+
+/**
+ * @return string
+ */
+function google_analytics_counter_queue_api_version() {
+  return '1.0';
+}
+
+/**
+ * @return string
+ */
+function google_analytics_counter_queue_ctools_plugin_api_hook_name() {
+  return 'google_analytics_counter_queue_api';
+}
+
+/**
+ * @return array
+ */
+function google_analytics_counter_queue_google_analytics_counter_queue_api() {
+  return array(
+    'api' => google_analytics_counter_queue_api_version(),
+    'path' => drupal_get_path('module', 'google_analytics_counter_queue') . '/modules',
+  );
 }
 
 /**
@@ -239,83 +269,117 @@ function google_analytics_counter_queue_log_exception(Exception $exception) {
 }
 
 /**
+ * Returns a boolean indicating whether the queue should be processed on cron.
+ *
+ * @return boolean
+ *   Returns TRUE if the queue should be processed during cron, otherwise FALSE.
+ */
+function google_analytics_counter_queue_execute_queues_on_cron() {
+  return variable_get('google_analytics_counter_queue_execute_queues_on_cron', TRUE);
+}
+
+/**
  * Queue worker for processing individual queue items.
  *
  * @param mixed $queue_item
  *   The queue item that is to be processed.
  */
 function google_analytics_counter_queue_process_queue($queue_item) {
-  // Lock this process for a maximum of 15 minutes (900 seconds).
-  // TODO: Revisit for cleanup and documentation around why locking and where the lock_release is placed.
-  if (!lock_acquire('google_analytics_counter_queue_process_queue', 900.0)) {
-    return;
-  }
-
   $queue_items = is_array($queue_item) ? $queue_item : array($queue_item);
 
-  $client = google_analytics_counter_queue_google_analytics_client();
+  $client = google_analytics_counter_queue_api_client();
 
   $total_records = NULL;
   $remaining_records = NULL;
   $pathview_info = array();
   $error = FALSE;
-  $start_index = NULL;
+  $start_index = 1;
+
+  $profile_id = google_analytics_counter_queue_api_profile_id();
+
+  $dimensions = array('ga:pagePath');
+  $metrics = array('ga:pageviews');
+
+  $filters = array();
+
+  foreach ($queue_items as $queue_item) {
+    $filters['ga:pagePath'][] = array(
+      'value' => $queue_item->getPath(),
+      'operator' => '=@',
+    );
+  }
 
   do {
-    if ($query = _google_analytics_counter_queue_process_queue_create_query($client, $queue_items, $total_records, $remaining_records, $start_index)) {
-      if ($query->execute() && !$query->getQueryResult()->isEmpty()) {
-        $data = $query->getQueryResult()->getData();
+    if ($total_records && $remaining_records) {
+      $diff_records_count = $total_records - $remaining_records;
+      if (0 > $diff_records_count) {
+        $error = TRUE;
+        break;
+      }
+      elseif (0 < $diff_records_count) {
+        $multiplier = round($diff_records_count / google_analytics_counter_queue_api_data_query_max_results(), 0);
+        $start_index = google_analytics_counter_queue_api_data_query_max_results() * $multiplier;
+        $start_index++;
+      }
+    }
 
-        if ($total_records != $data['totalResults']) {
-          $total_records = $data['totalResults'];
-        }
+    if ($error) {
+      break;
+    }
 
-        if (isset($start_index)) {
-          $remaining_records = $total_records - ($start_index + $data['itemsPerPage']);
-        }
-        elseif ($data['itemsPerPage'] < $total_records) {
-          $remaining_records = $total_records - $data['itemsPerPage'];
-        }
-        elseif ($total_records < $data['itemsPerPage']) {
-          $remaining_records = 0;
-        }
+    $response = google_analytics_counter_queue_api_request_data($client, $profile_id, $dimensions, $metrics, $filters, NULL, NULL, $start_index, NULL);
+    if (!$response) {
+      $error = TRUE;
+      break;
+    }
 
-        if (!empty($data['rows'])) {
-          foreach ($data['rows'] as $row) {
-            $ga_pagepath = trim(array_shift($row), '/');
-            $ga_pageviews = array_shift($row);
+    if ($total_records != $response['data']['totalResults']) {
+      $total_records = $response['data']['totalResults'];
+    }
 
-            $ga_pagepath_info = parse_url($ga_pagepath);
-            if (!empty($ga_pagepath_info['path'])) {
-              $ga_pagepath_info['path'] = strtolower($ga_pagepath_info['path']);
-              if (isset($pathview_info[$ga_pagepath_info['path']]) && FALSE === $pathview_info[$ga_pagepath_info['path']]) {
+    if (0 < $total_records) {
+      if (isset($start_index)) {
+        $remaining_records = $total_records - ($start_index + $response['data']['itemsPerPage']);
+      }
+      elseif ($response['data']['itemsPerPage'] < $total_records) {
+        $remaining_records = $total_records - $response['data']['itemsPerPage'];
+      }
+      elseif ($total_records < $response['data']['itemsPerPage']) {
+        $remaining_records = 0;
+      }
+
+      if (!empty($response['data']['rows'])) {
+        foreach ($response['data']['rows'] as $row) {
+          $ga_pagepath = trim(array_shift($row), '/');
+          $ga_pageviews = array_shift($row);
+
+          $ga_pagepath_info = parse_url($ga_pagepath);
+          if (!empty($ga_pagepath_info['path'])) {
+            $ga_pagepath_info['path'] = strtolower($ga_pagepath_info['path']);
+            if (isset($pathview_info[$ga_pagepath_info['path']]) && FALSE === $pathview_info[$ga_pagepath_info['path']]) {
+              continue;
+            }
+
+            if (google_analytics_counter_queue_valid_path($ga_pagepath_info['path'])) {
+              $drupal_path = drupal_get_normal_path($ga_pagepath_info['path']);
+              if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($drupal_path)) {
                 continue;
               }
 
-              if (google_analytics_counter_queue_valid_path($ga_pagepath_info['path'])) {
-                $drupal_path = drupal_get_normal_path($ga_pagepath_info['path']);
-                if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($drupal_path)) {
-                  continue;
-                }
-
-                $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
-                if (!empty($ignored_paths) && drupal_match_path($ga_pagepath_info['path'], $ignored_paths)) {
-                  continue;
-                }
-
-                if (!isset($pathview_info[$drupal_path])) {
-                  $pathview_info[$drupal_path] = array(
-                    $ga_pagepath_info['path'] => 0,
-                  );
-                }
-
-                $pathview_info[$drupal_path][$ga_pagepath_info['path']] += $ga_pageviews;
+              $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
+              if (!empty($ignored_paths) && drupal_match_path($ga_pagepath_info['path'], $ignored_paths)) {
+                continue;
               }
+
+              if (!isset($pathview_info[$drupal_path])) {
+                $pathview_info[$drupal_path] = array(
+                  $ga_pagepath_info['path'] => 0,
+                );
+              }
+
+              $pathview_info[$drupal_path][$ga_pagepath_info['path']] += $ga_pageviews;
             }
           }
-        }
-        else {
-          $error = TRUE;
         }
       }
       else {
@@ -328,61 +392,9 @@ function google_analytics_counter_queue_process_queue($queue_item) {
   }
   while (!$error && ($remaining_records > 0 || NULL === $remaining_records));
 
-  lock_release('google_analytics_counter_queue_process_queue');
-
   if (!$error && !empty($pathview_info)) {
     _google_analytics_counter_queue_process_queue_process_statistics($queue_items, $pathview_info);
   }
-}
-
-/**
- * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
- * @param array $queue_items
- * @param $total_records
- * @param $remaining_records
- * @param $start_index
- * @return bool|GoogleAnalyticsCounterQueueGoogleAnalyticsApiPagePathViewsQuery
- */
-function _google_analytics_counter_queue_process_queue_create_query(GoogleAnalyticsCounterQueueGoogleApiClient $client, array &$queue_items, &$total_records, &$remaining_records, &$start_index) {
-  $query = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiPagePathViewsQuery($client);
-  $query->setTimeout(120);
-  $query->setParameter('ids', 'ga:' . google_analytics_counter_queue_google_analytics_profile_id())
-    ->setParameter('dimensions', 'ga:pagePath')
-    ->setParameter('metrics', 'ga:pageviews')
-    ->setParameter('start-date', google_analytics_counter_queue_google_analytics_data_query_start_date())
-    ->setParameter('end-date', date('Y-m-d', strtotime('tomorrow')))
-    ->setParameter('max-results', google_analytics_counter_queue_google_analytics_data_query_max_results());
-  // Create an instance for our `filters` parameter which will set after initial
-  // path processing for queue item(s) are aggregated into a single array.
-  $filter_params = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableQueryParameter('filters', array(),
-    new GoogleAnalyticsCounterQueueGoogleAnalyticsApiFilterableFilterableQueryParameterOperatorContains()
-  );
-
-  $value = array();
-  foreach ($queue_items as $item) {
-    $value[] = $item->getPath();
-  }
-  $filter_params->setValue(array('ga:pagePath' => $value));
-  $query->setParameter($filter_params);
-
-  if ($total_records && $remaining_records) {
-    $difference = $total_records - $remaining_records;
-    if (0 > $difference) {
-      // TODO: Add log item here.
-      return FALSE;
-    }
-    elseif (0 < $difference) {
-      $multiplier = round($difference / google_analytics_counter_queue_google_analytics_data_query_max_results(), 0);
-      $start_index = google_analytics_counter_queue_google_analytics_data_query_max_results() * $multiplier;
-      $start_index++;
-    }
-    else {
-      $start_index = 1;
-    }
-
-    $query->setParameter('start-index', $start_index);
-  }
-  return $query;
 }
 
 /**
@@ -469,9 +481,57 @@ function _google_analytics_counter_queue_process_queue_process_statistics(array 
       // the potential to have large number of queue items to process. Should
       // the implementer perform extensive operations, this could result in
       // degradation of performance.
+      google_analytics_counter_queue_module_include();
+
       module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, $statistics);
     }
   }
+}
+
+/**
+ * Retrieves the general queue instance.
+ *
+ * @return GoogleAnalyticsCounterQueueQueue
+ *   The general queue instance.
+ */
+function google_analytics_counter_queue_queue() {
+  return DrupalQueue::get('google_analytics_counter_queue');
+}
+
+/**
+ * Retrieves the priority queue instance.
+ *
+ * @return GoogleAnalyticsCounterQueuePriorityQueue
+ *   The priority queue instance.
+ */
+function google_analytics_counter_queue_priority_queue() {
+  return DrupalQueue::get('google_analytics_counter_priority_queue');
+}
+
+/**
+ * Load callback handler for loading a single Queue item from the priority queue.
+ *
+ * @param int $item_id
+ *   The queue item's item_id value (item identifier).
+ *
+ * @return mixed
+ *   Returns the queue item if it exists, otherwise returns NULL.
+ */
+function google_analytics_counter_queue_queue_item_load($item_id) {
+  return GoogleAnalyticsCounterQueueQueueItem::load($item_id);
+}
+
+/**
+ * Loads a single queue item given a path.
+ *
+ * @param string $path
+ *   The path of the queue item to load.
+ *
+ * @return mixed
+ *   Returns the queue item if it exists, otherwise returns NULL.
+ */
+function google_analytics_counter_queue_queue_item_load_by_path($path) {
+  return GoogleAnalyticsCounterQueueQueueItem::load(NULL, array('path' => $path));
 }
 
 /**
@@ -480,7 +540,7 @@ function _google_analytics_counter_queue_process_queue_process_statistics(array 
  * @return string
  *   The query start date in YYYY-MM-DD format.
  */
-function google_analytics_counter_queue_google_analytics_data_query_start_date() {
+function google_analytics_counter_queue_api_data_query_start_date() {
   // Google Analytics API requires that the `start-date` of any query is greater
   // than or equal to that of January 1st, 2005 (2005-01-01).
   return variable_get('google_analytics_counter_queue_google_analytics_data_query_start_date', '2005-01-01');
@@ -596,52 +656,6 @@ function google_analytics_counter_queue_form_process_tableselectdrag($element) {
 }
 
 /**
- * Retrieves the general queue instance.
- *
- * @return GoogleAnalyticsCounterQueueQueue
- *   The general queue instance.
- */
-function google_analytics_counter_queue_queue() {
-  return DrupalQueue::get('google_analytics_counter_queue');
-}
-
-/**
- * Retrieves the priority queue instance.
- *
- * @return GoogleAnalyticsCounterQueuePriorityQueue
- *   The priority queue instance.
- */
-function google_analytics_counter_queue_priority_queue() {
-  return DrupalQueue::get('google_analytics_counter_priority_queue');
-}
-
-/**
- * Load callback handler for loading a single Queue item from the priority queue.
- *
- * @param int $item_id
- *   The queue item's item_id value (item identifier).
- *
- * @return mixed
- *   Returns the queue item if it exists, otherwise returns NULL.
- */
-function google_analytics_counter_queue_queue_item_load($item_id) {
-  return GoogleAnalyticsCounterQueueQueueItem::load($item_id);
-}
-
-/**
- * Loads a single queue item given a path.
- *
- * @param string $path
- *   The path of the queue item to load.
- *
- * @return mixed
- *   Returns the queue item if it exists, otherwise returns NULL.
- */
-function google_analytics_counter_queue_queue_item_load_by_path($path) {
-  return GoogleAnalyticsCounterQueueQueueItem::load(NULL, array('path' => $path));
-}
-
-/**
  * Retrieves the next weight value within a queue based on a position.
  *
  * When trying to retrieve a weight value so that the weight would be used to
@@ -679,17 +693,6 @@ function google_analytics_counter_queue_queue_item_next_weight($position = 'bott
 }
 
 /**
- * Returns the cache time to live in seconds.
- *
- * @return mixed
- *   Returns an integer representing the number of seconds as the length of time
- *   for the cache's life; returns NULL if the cache lifetime is not set.
- */
-function google_analytics_counter_queue_cache_lifetime() {
-  return variable_get('google_analytics_counter_queue_cache_lifetime', NULL);
-}
-
-/**
  * Returns the GoogleAnalyticsCounterQueueGoogleApiClient instance.
  *
  * The client is cached statically upon instantiation and therefore, additional
@@ -699,12 +702,12 @@ function google_analytics_counter_queue_cache_lifetime() {
  * @return GoogleAnalyticsCounterQueueGoogleApiClient
  *   The client instance using the stored oauth consumer and access tokens.
  */
-function google_analytics_counter_queue_google_analytics_client() {
+function google_analytics_counter_queue_api_client() {
   static $static_fast_cache = NULL;
   if (NULL === $static_fast_cache) {
     $static_fast_cache = new GoogleAnalyticsCounterQueueGoogleApiClient(
-      google_analytics_counter_queue_google_analytics_oauth_consumer(),
-      google_analytics_counter_queue_google_analytics_oauth_token()
+      google_analytics_counter_queue_api_oauth_consumer(),
+      google_analytics_counter_queue_api_oauth_token()
     );
   }
   return $static_fast_cache;
@@ -716,8 +719,8 @@ function google_analytics_counter_queue_google_analytics_client() {
  * @return string
  *   The consumer key stored, otherwise returns `anonymous`.
  */
-function google_analytics_counter_queue_google_analytics_oauth_consumer_key() {
-  return variable_get('google_analytics_counter_queue_google_analytics_oauth_consumer_key', 'anonymous');
+function google_analytics_counter_queue_api_oauth_consumer_key() {
+  return variable_get('google_analytics_counter_queue_api_oauth_consumer_key', 'anonymous');
 }
 
 /**
@@ -726,8 +729,8 @@ function google_analytics_counter_queue_google_analytics_oauth_consumer_key() {
  * @return string
  *   The consumer secret stored, otherwise returns `anonymous`.
  */
-function google_analytics_counter_queue_google_analytics_oauth_consumer_secret() {
-  return variable_get('google_analytics_counter_queue_google_analytics_oauth_consumer_secret', 'anonymous');
+function google_analytics_counter_queue_api_oauth_consumer_secret() {
+  return variable_get('google_analytics_counter_queue_api_oauth_consumer_secret', 'anonymous');
 }
 
 /**
@@ -740,12 +743,12 @@ function google_analytics_counter_queue_google_analytics_oauth_consumer_secret()
  * @return GoogleAnalyticsCounterQueueOAuthToken
  *   The consumer token (key and secret) object instance.
  */
-function google_analytics_counter_queue_google_analytics_oauth_consumer($reset = FALSE) {
+function google_analytics_counter_queue_api_oauth_consumer($reset = FALSE) {
   static $static_fast_cache = NULL;
   if (!$static_fast_cache || $reset) {
     $static_fast_cache = new GoogleAnalyticsCounterQueueOAuthToken(
-      google_analytics_counter_queue_google_analytics_oauth_consumer_key(),
-      google_analytics_counter_queue_google_analytics_oauth_consumer_secret()
+      google_analytics_counter_queue_api_oauth_consumer_key(),
+      google_analytics_counter_queue_api_oauth_consumer_secret()
     );
   }
   return $static_fast_cache;
@@ -757,8 +760,8 @@ function google_analytics_counter_queue_google_analytics_oauth_consumer($reset =
  * @return string
  *   Returns the access token key stored, otherwise NULL.
  */
-function google_analytics_counter_queue_google_analytics_oauth_token_key() {
-  return variable_get('google_analytics_counter_queue_google_analytics_oauth_token', NULL);
+function google_analytics_counter_queue_api_oauth_token_key() {
+  return variable_get('google_analytics_counter_queue_api_oauth_token', NULL);
 }
 
 /**
@@ -767,8 +770,8 @@ function google_analytics_counter_queue_google_analytics_oauth_token_key() {
  * @return string
  *   Returns the access token secret stored, otherwise NULL.
  */
-function google_analytics_counter_queue_google_analytics_oauth_token_secret() {
-  return variable_get('google_analytics_counter_queue_google_analytics_oauth_token_secret', NULL);
+function google_analytics_counter_queue_api_oauth_token_secret() {
+  return variable_get('google_analytics_counter_queue_api_oauth_token_secret', NULL);
 }
 
 /**
@@ -782,12 +785,12 @@ function google_analytics_counter_queue_google_analytics_oauth_token_secret() {
  *   The access token (key and secret) object instance if they are set;
  *   otherwise will return NULL.
  */
-function google_analytics_counter_queue_google_analytics_oauth_token($reset = FALSE) {
+function google_analytics_counter_queue_api_oauth_token($reset = FALSE) {
   static $static_fast_cache = NULL;
   if (!$static_fast_cache || $reset) {
-    $oauth_token_key = google_analytics_counter_queue_google_analytics_oauth_token_key();
-    $oauth_token_secret = google_analytics_counter_queue_google_analytics_oauth_token_secret();
-    if (!empty($oauth_token_key) && !empty($oauth_token_secret)) {
+    $oauth_token_key = google_analytics_counter_queue_api_oauth_token_key();
+    $oauth_token_secret = google_analytics_counter_queue_api_oauth_token_secret();
+    if (!empty($oauth_token_key) && !empty($oauth_token_secret) && 'anonymous' != $oauth_token_key && 'anonymous' != $oauth_token_secret) {
       $static_fast_cache = new GoogleAnalyticsCounterQueueOAuthToken($oauth_token_key, $oauth_token_secret);
     }
     else {
@@ -803,8 +806,8 @@ function google_analytics_counter_queue_google_analytics_oauth_token($reset = FA
  * @return mixed
  *   The Google Analytics profile id.
  */
-function google_analytics_counter_queue_google_analytics_profile_id() {
-  return variable_get('google_analytics_counter_queue_google_analytics_profile_id', NULL);
+function google_analytics_counter_queue_api_profile_id() {
+  return variable_get('google_analytics_counter_queue_api_profile_id', NULL);
 }
 
 /**
@@ -836,11 +839,10 @@ function google_analytics_counter_queue_xoauth_display_name() {
  *
  */
 function google_analytics_counter_queue_oauth_callback() {
-  $consumer_token = google_analytics_counter_queue_google_analytics_oauth_consumer();
+  $consumer_token = google_analytics_counter_queue_api_oauth_consumer();
 
   if (isset($_SESSION['google_analytics_counter_queue'])) {
     $session_data = $_SESSION['google_analytics_counter_queue'];
-    unset($_SESSION['google_analytics_counter_queue']);
   }
   else {
     $session_data = array();
@@ -853,15 +855,17 @@ function google_analytics_counter_queue_oauth_callback() {
     return drupal_access_denied();
   }
 
-  // TODO: add if ($session_data['oauth_token'] != $oauth_token) { error.
+  if ($session_data['oauth']['token']->key != $oauth_token) {
+    return drupal_access_denied();
+  }
 
   $client = new GoogleAnalyticsCounterQueueGoogleApiClient($consumer_token, $session_data['oauth']['token']);
   $client->setVerifier($oauth_verifier);
 
   $access_token = $client->getAccessToken();
 
-  variable_set('google_analytics_counter_queue_google_analytics_oauth_token', $access_token->key);
-  variable_set('google_analytics_counter_queue_google_analytics_oauth_token_secret', $access_token->secret);
+  variable_set('google_analytics_counter_queue_api_oauth_token', $access_token->key);
+  variable_set('google_analytics_counter_queue_api_oauth_token_secret', $access_token->secret);
 
   drupal_goto('admin/config/system/google-analytics-counter-queue/authentication');
 }
@@ -904,70 +908,6 @@ function google_analytics_counter_queue_valid_path($path) {
   return $static_fast_cache[$path];
 }
 
-/**
- *
- *
- * @param $path
- * @return mixed
- */
-function google_analytics_counter_queue_statistics_path($path, $reset = FALSE) {
-  $static_fast_cache = &drupal_static(__FUNCTION__, array());
-  if (!isset($static_fast_cache[$path]) || isset($static_fast_cache[$path]) && $reset) {
-    $query = db_select('google_analytics_counter_queue_statistics', 's')
-      ->fields('s')
-      ->condition('s.path', $path)
-      ->execute();
-    if ($row = $query->fetchObject()) {
-      $row->items = array();
-      $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
-        ->fields('p')
-        ->condition('p.statistic_id', $row->statistic_id)
-        ->execute();
-      while ($item = $query->fetchObject()) {
-        $row->items[$item->path] = $item;
-      }
-      $static_fast_cache[$path] = $row;
-    }
-    else {
-      $static_fast_cache[$path] = FALSE;
-    }
-  }
-
-  return $static_fast_cache[$path];
-}
-
-/**
- * @param $path
- * @param int $total_count
- * @param int $timestamp
- * @return bool
- */
-function _google_analytics_counter_queue_statistics_create($path, $total_count = 0, $timestamp = REQUEST_TIME) {
-  if ($exists = google_analytics_counter_queue_statistics_path($path)) {
-    return FALSE;
-  }
-
-  $statistic = array(
-    'created' => $timestamp,
-    'updated' => $timestamp,
-    'path' => $path,
-    'totalcount' => $total_count,
-  );
-
-  $statistic_id = db_insert('google_analytics_counter_queue_statistics')
-    ->fields($statistic)
-    ->execute();
-  if ($statistic_id) {
-    $statistic['statistic_id'] = $statistic_id;
-    $statistic['items'] = array();
-
-    $static_fast_cache = &drupal_static('google_analytics_counter_queue_statistics_path', array());
-    $static_fast_cache[$path] = (object) $statistic;
-    return $static_fast_cache[$path];
-  }
-
-  return FALSE;
-}
 
 /**
  * Returns an array of valid select options for positioning of queue item.
@@ -1191,8 +1131,8 @@ function google_analytics_counter_queue_queue_item_delete_confirm_submit($form, 
 /**
  * @return mixed
  */
-function google_analytics_counter_queue_google_analytics_data_query_max_results() {
-  return variable_get('google_analytics_counter_queue_google_analytics_data_query_max_results', '1000');
+function google_analytics_counter_queue_api_data_query_max_results() {
+  return variable_get('google_analytics_counter_queue_api_data_query_max_results', '1000');
 }
 
 /**
@@ -1310,128 +1250,44 @@ function google_analytics_counter_queue_queue_process_multiple() {
   return variable_get('google_analytics_counter_queue_queue_process_multiple', 1);
 }
 
-/**
- * Implements hook_google_analytics_counter_queue_queue_item_insert().
- */
-function rules_google_analytics_counter_queue_queue_item_insert(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  rules_invoke_event('google_analytics_counter_queue_queue_item_insert', $queue_item);
-}
-
-/**
- * Implements hook_google_analytics_counter_queue_queue_item_update().
- */
-function rules_google_analytics_counter_queue_queue_item_update(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  rules_invoke_event('google_analytics_counter_queue_queue_item_update', $queue_item);
-}
-
-/**
- * Implements hook_google_analytics_counter_queue_queue_item_delete().
- */
-function rules_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  rules_invoke_event('google_analytics_counter_queue_queue_item_delete', $queue_item);
-}
-
-/**
- * Implements hook_google_analytics_counter_queue_queue_item_processed().
- */
-function rules_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  rules_invoke_event('google_analytics_counter_queue_queue_item_processed', $queue_item);
-}
-
-/**
- * Implements hook_google_analytics_counter_queue_queue_item_processed().
- */
-function statistics_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics) {
-  if (NULL !== $statistics && google_analytics_counter_queue_statistics_allow_update()) {
-    // Attempt to lookup the queue item's path source.
-    $normalized_path = drupal_lookup_path('source', $queue_item->getPath());
-    // If FALSE is returned from `drupal_lookup_path`, assume that the queue
-    // item path is already normalized (we hope).
-    $normalized_path = FALSE === $normalized_path ? $queue_item->getPath() : $normalized_path;
-    if (preg_match('|^node/([0-9]+)?|', $normalized_path, $matches)) {
-      $node_id = isset($matches[1]) ? $matches[1] : NULL;
-      if (is_numeric($node_id)) {
-        $node_id = intval($node_id);
-        db_merge('node_counter')
-          ->key(array('nid' => $node_id))
-          ->fields(array(
-            'daycount' => 0,
-            'totalcount' => $statistics->totalcount,
-            'timestamp' => time(),
-          ))
-          ->execute();
-        google_analytics_counter_queue_log(WATCHDOG_DEBUG, "Updated Drupal core statistics' {node_counter} table for node @node_id.", array('@node_id' => $node_id));
-      }
-    }
-  }
-}
-
-/**
- * Implements hook_google_analytics_counter_queue_google_analytics_api_query_alter().
- */
-function node_google_analytics_counter_queue_google_analytics_api_query_alter(GoogleAnalyticsCounterQueueGoogleApiQuery $query) {
-  // TODO: Cleanup and refactor in the future.
-  if ('data/ga' === $query->getEndpointPath()) {
-    foreach ($query->getParameters() as $parameter) {
-      if ('filters' === $parameter->getName()) {
-        $filters = array();
-        foreach ($parameter->getValue() as $filter_name => $filter_value) {
-          if ('ga:pagePath' === $filter_name) {
-            $original = $filter_value;
-            foreach ($original as $value) {
-              _node_google_analytics_counter_queue_generate_node_aliases_for_node_system_path($value);
-              $filters = array_merge($filters, $value);
+function _google_analytics_counter_queue_api_request_parameters_compile(array $parameters, array &$compiled) {
+  // TODO: Re-implement so that this isn't such a disaster, but it works for now.
+  foreach ($parameters as $param_name => $param_value) {
+    if (is_array($param_value)) {
+      foreach ($param_value as $key => $value) {
+        if (is_array($value)) {
+          foreach ($value as $k => $v) {
+            if (is_array($v)) {
+              if (isset($v['value'])) {
+                $val = $v['value'];
+                if (isset($v['operator'])) {
+                  $op = $v['operator'];
+                }
+              }
+              else {
+                continue;
+              }
             }
+            else {
+              $val = $v;
+            }
+
+            $op = isset($op) ? $op : '==';
+            $compiled[$param_name][] = $key . $op . $val;
           }
         }
-
-        $param_value = $parameter->getValue();
-        if (isset($param_value['ga:pagePath'])) {
-          $param_value['ga:pagePath'] = $filters;
-          $parameter->setValue($param_value);
+        else {
+          // TODO: Figure out this case.
         }
       }
-    }
-  }
-}
 
-/**
- * Helper function for retrieving path aliases for a node system path.
- *
- * @param string &$path
- *   A path passed by reference. If the path is a node system path, the returned
- *   value of this variable will be an array containing the node system path and
- *   any URL aliases that might exist for it.
- */
-function _node_google_analytics_counter_queue_generate_node_aliases_for_node_system_path(&$path) {
-  if ($node_id = google_analytics_counter_queue_path_is_node_view($path)) {
-    $original = $path;
-    $path = array($path);
-    $query = db_select('url_alias', 'a')
-      ->fields('a', array('alias'))
-      ->condition('a.source', 'node/' . $node_id)
-      ->execute();
-    while ($row = $query->fetchObject()) {
-      $path[] = $row->alias;
+      $compiled[$param_name] = implode(',', $compiled[$param_name]);
+    }
+    else {
+      $compiled[$param_name] = $param_value;
     }
   }
-}
-
-/**
- * Implements hook_google_analytics_counter_queue_statistics_overview_alter().
- */
-function node_google_analytics_counter_queue_statistics_overview_alter(&$statistic_rows, &$statistic_headers) {
-  if (!empty($statistic_rows)) {
-    foreach ($statistic_rows as $statistic_id => &$statistic) {
-      if ($node_id = google_analytics_counter_queue_path_is_node_view($statistic['#statistic']->path)) {
-        $node = node_load($node_id);
-        $statistic['path']['data']['#title'] = format_string('!title  (!path)', array(
-          '!title' => $node->title,
-          '!path' => $statistic['#statistic']->path,
-        ));
-      }
-    }
-  }
+  return $compiled;
 }
 
 /**
@@ -1458,137 +1314,400 @@ function google_analytics_counter_queue_path_is_node_view($path) {
 }
 
 /**
- * @param $statistic
- * @return string
+ * @return int
  */
-function google_analytics_counter_queue_statistic_view_page($statistic) {
-  drupal_set_title(t('<em>View statistics for</em> @path', array('@path' => $statistic->path)), PASS_THROUGH);
-
-  $statistics_info_header = array(
-    'label' => array('data' => t('Label'), 'class' => array('invisible')),
-    'value' => array('data' => t('Value'), 'class' => array('invisible')),
-  );
-
-  $statistics_info_rows = array(
-    'totalcount' => array(
-      'label' => array('data' => array(
-        '#markup' => t('Total count'),
-        '#prefix' => '<strong>',
-        '#suffix' => '</strong>',
-      )),
-      'value' => array('data' => $statistic->totalcount),
-    ),
-    'number_of_paths' => array(
-      'label' => array('data' => array(
-        '#markup' => t('Number of paths'),
-        '#prefix' => '<strong>',
-        '#suffix' => '</strong>',
-      )),
-      'value' => array('data' => count($statistic->items)),
-    ),
-  );
-
-  drupal_alter('google_analytics_counter_queue_statistic_overview_info', $statistics_info_rows, $statistics_info_header, $statistic);
-
-  $statistics_by_path_rows = array();
-  foreach ($statistic->items as $item) {
-    $statistics_by_path_rows[] = array(
-      'path' => array('data' => $item->path),
-      'views' => array('data' => $item->count)
-    );
-  }
-
-  $render = array(
-    'statistical_info' => array(
-      '#type' => 'table',
-      '#header' => $statistics_info_header,
-      '#rows' => $statistics_info_rows,
-      '#prefix' => theme('html_tag', array(
-        'element' => array(
-          '#tag' => 'h2',
-          '#value' => t('Information'),
-        ),
-      )),
-    ),
-    'statistics_by_paths' => array(
-      '#type' => 'table',
-      '#header' => array(
-        'path' => array('data' => t('Path')),
-        'views' => array('data' => t('Page views')),
-      ),
-      '#rows' => $statistics_by_path_rows,
-      '#prefix' => theme('html_tag', array(
-        'element' => array(
-         '#tag' => 'h2',
-         '#value' => t('Statistics by path'),
-        ),
-      )),
-    ),
-  );
-  return $render;
+function google_analytics_counter_queue_api_http_request_timeout() {
+  return (int) variable_get('google_analytics_counter_queue_api_http_request_timeout', 30);
 }
 
 /**
- * @param $form
- * @param $form_state
- * @param $statistic
- * @return mixed
+ * Redirects the end user to Google Accounts to provide authorization.
  */
-function google_analytics_counter_queue_statistic_delete_confirm($form, &$form_state, $statistic) {
-  $form['statistic_id'] = array(
-    '#type' => 'value',
-    '#value' => $statistic->statistic_id,
+function google_analytics_counter_queue_api_auth_obtain_auth(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
+  if (module_exists('overlay') && 'child' == overlay_get_mode()) {
+    overlay_close_dialog();
+    overlay_deliver_empty_page();
+  }
+
+  $consumer_token = $client->getConsumer()->key;
+  if (empty($consumer_token)) {
+    google_analytics_counter_queue_log(WATCHDOG_ALERT, 'Attempting to obtain authorization from Google accounts, however, the consumer oauth key is empty.');
+    drupal_set_message(t('An error occurred while attempting to obtain authorization. Please try again.'), 'warning');
+    drupal_goto('admin/config/system/google-analytics-counter-queue/authentication');
+    return;
+  }
+
+  drupal_goto('https://www.google.com/accounts/OAuthAuthorizeToken', array(
+    'query' => array(
+      'oauth_token' => $consumer_token,
+      'hd' => 'default',
+    ),
+  ));
+}
+
+function google_analytics_counter_queue_api_auth_request_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
+  $parameters = array(
+    'scope' => 'https://www.googleapis.com/auth/analytics.readonly',
+    'xoauth_displayname' => google_analytics_counter_queue_xoauth_display_name(),
+    'oauth_callback' => google_analytics_counter_queue_oauth_callback_url(),
   );
-  return confirm_form($form, t('Are you sure you want to delete the statistical information for %path?', array('%path' => $statistic->path)), 'admin/config/system/google-analytics-counter-queue/statistics', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
+  $response = google_analytics_counter_queue_api_request($client, 'auth/request-token', $parameters);
+  return $response;
 }
 
-function google_analytics_counter_queue_statistic_delete_confirm_submit($form, &$form_state) {
-  if ($form_state['values']['confirm']) {
-    $statistic = google_analytics_counter_queue_statistic_load($form_state['values']['statistic_id']);
-    google_analytics_counter_queue_statistic_delete($form_state['values']['statistic_id']);
-    drupal_set_message(t('You have successfully deleted statistic information for path %path.', array(
-      '%path' => $statistic->path,
-    )));
-    drupal_goto('admin/config/system/google-analytics-counter-queue/statistics');
+function google_analytics_counter_queue_api_auth_access_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
+  $parameters = array(
+    'oauth_verifier' => $client->getVerifier(),
+  );
+  $response = google_analytics_counter_queue_api_request($client, 'auth/access-token', $parameters);
+  return $response;
+}
+
+function google_analytics_counter_queue_api_auth_revoke(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
+  $response = google_analytics_counter_queue_api_request($client, 'auth/revoke-token');
+  return $response;
+}
+
+/**
+ *
+ */
+function google_analytics_counter_queue_api_request_data(GoogleAnalyticsCounterQueueGoogleApiClient $client, $ids = NULL, array $dimensions = array(), array $metrics = array(), array $filters = array(), $start_date = NULL, $end_date = NULL, $start_index = 0, $max_results = NULL) {
+  $parameters = array(
+    'ids' => 'ga:' . $ids,
+    'dimensions' => implode(',', $dimensions),
+    'metrics' => implode(',', $metrics),
+  );
+
+  if ($start_date) {
+    $parameters['start-date'] = $start_date;
   }
-}
 
-function google_analytics_counter_queue_statistic_load($statistic_id) {
-  // TODO: Re-implement so that it shares data or common implementation with that of google_analytics_coutner_queue_statistics_path().
-  $static_fast_cache = &drupal_static('google_analytics_counter_queue_statistics', array());
-  if (!isset($static_fast_cache[$statistic_id])) {
-    $query = db_select('google_analytics_counter_queue_statistics', 's')
-      ->fields('s')
-      ->condition('s.statistic_id', $statistic_id)
-      ->execute();
-    if ($row = $query->fetchObject()) {
-      $row->items = array();
-      $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
-        ->fields('p')
-        ->condition('p.statistic_id', $row->statistic_id)
-        ->execute();
-      while ($item = $query->fetchObject()) {
-        $row->items[$item->id] = $item;
+  if ($end_date) {
+    $parameters['end-date'] = $end_date;
+  }
+
+  if ($start_index) {
+    $parameters['start-index'] = $start_index;
+  }
+
+  if ($max_results) {
+    $parameters['max-results'] = $max_results;
+  }
+
+  if (!empty($filters)) {
+    foreach ($filters as $filter_name => $filter_info) {
+      foreach ($filter_info as $k => $filter_item) {
+        if (is_array($filter_item)) {
+          $value = $filter_item['value'];
+          $operator = isset($filter_item['operator']) ? $filter_item['operator'] : '==';
+        }
+        else {
+          $value = $filter_item;
+          $operator = '==';
+        }
+
+        $parameters['filters'][$filter_name][] = array(
+          'value' => $value,
+          'operator' => $operator,
+        );
       }
-      $static_fast_cache[$row->statistic_id] = $row;
-    }
-    else {
-      $static_fast_cache[$statistic_id] = FALSE;
     }
   }
-  return $static_fast_cache[$statistic_id];
+
+  $response = google_analytics_counter_queue_api_request($client, 'analytics/data', $parameters, NULL, 120);
+  return $response;
 }
 
-function google_analytics_counter_queue_statistic_delete($statistic_id) {
-  // TODO: Probably wrap this in a try-catch?
-  db_delete('google_analytics_counter_queue_statistics_path')
-    ->condition('statistic_id', $statistic_id)
-    ->execute();
-  db_delete('google_analytics_counter_queue_statistics')
-    ->condition('statistic_id', $statistic_id)
-    ->execute();
-  $static_fast_cache = &drupal_static('google_analytics_counter_queue_statistics', array());
-  if (isset($static_fast_cache[$statistic_id])) {
-    unset($static_fast_cache[$statistic_id]);
+/**
+ *
+ * @param null $account_id
+ * @return array
+ */
+function google_analytics_counter_queue_api_request_web_properties($account_id = NULL) {
+  $cache = cache_get('google_analytics_counter_queue:api:analytics/web-properties');
+  if (empty($cache)) {
+    $parameters = array();
+    if ($account_id) {
+      $parameters['@account-id'] = $account_id;
+    }
+
+    $client = google_analytics_counter_queue_api_client();
+
+    if ($response = google_analytics_counter_queue_api_request($client, 'analytics/web-properties', $parameters)) {
+      if ('200' == $response['code'] && !empty($response['data'])) {
+        cache_set('google_analytics_counter_queue:api:analytics/web-properties', $response);
+      }
+    }
+  }
+  else {
+    $response = $cache->data;
+  }
+  return $response;
+}
+
+/**
+ * @param string $account_id
+ * @param string $profile_id
+ * @return array
+ */
+function google_analytics_counter_queue_api_request_profiles($account_id = NULL, $profile_id = NULL) {
+  // TODO: Take into account $account_id and $profile_id for caching.
+  $cache = cache_get('google_analytics_counter_queue:api:analytics/profiles');
+  if (empty($cache)) {
+    $parameters = array();
+    if ($account_id) {
+      $parameters['@account-id'] = $account_id;
+    }
+    if ($profile_id) {
+      $parameters['@profile-id'] = $profile_id;
+    }
+
+    $client = google_analytics_counter_queue_api_client();
+
+    if ($response = google_analytics_counter_queue_api_request($client, 'analytics/profiles', $parameters)) {
+      if ('200' == $response['code'] && !empty($response['code'])) {
+        cache_set('google_analytics_counter_queue:api:analytics/profiles', $response);
+      }
+    }
+  }
+  else {
+    $response = $cache->data;
+  }
+
+  return $response;
+}
+
+/**
+ * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ * @param $endpoint_name
+ * @param array $parameters
+ * @param array $headers
+ * @return array
+ */
+function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueGoogleApiClient $client, $endpoint_name, array $parameters = array(), array $headers = array(), $timeout = NULL) {
+  $endpoint = google_analytics_counter_queue_api_endpoint_info($endpoint_name);
+  // If the endpoint does not exist, log the error and return FALSE.
+  if (!$endpoint) {
+    google_analytics_counter_queue_log(WATCHDOG_WARNING, 'Attempted to invoke HTTP request using an invalid endpoint (%endpoint).', array('%endpoint' => $endpoint_name));
+    return FALSE;
+  }
+
+  $endpoint['name'] = $endpoint_name;
+
+  // Ensure that the $endpoint information contains all default properties.
+  $endpoint = $endpoint + _google_analytics_counter_queue_api_endpoint_info_defaults();
+
+  // If the endpoint requires authentication (default value is TRUE), validate
+  // that the client is authenticated and should it not be, log the error and
+  // return FALSE.
+  if ($endpoint['authenticated'] && !$client->isAuthenticated()) {
+    google_analytics_counter_queue_log(WATCHDOG_WARNING, 'Attempt t perform Google API request without being authenticated. Endpoint is: %endpoint', array('%endpoint' => $endpoint_name));
+    return FALSE;
+  }
+
+  // Check if the endpoint's path has specific parameters (e.g. @account-id) and
+  // ensure that they are assigned an appropriate value prior to generating
+  // the request url.
+  if (!empty($endpoint['path_parameters'])) {
+    $combined_params = $parameters + $endpoint['path_parameters'];
+    $endpoint['path'] = strtr($endpoint['path'], $combined_params);
+  }
+
+  // Ensure the endpoint has all default properties to ensure that no HTTP 400
+  // Bad Requests occur results as a result of missing parameters.
+  $parameters = $parameters + $endpoint['parameters'];
+  // Concatenate the endpoint's host and path.
+  $request_url = $endpoint['host'] . '/' . $endpoint['path'];
+
+  google_analytics_counter_queue_module_include();
+
+  drupal_alter('google_analytics_counter_queue_api_request', $parameters, $endpoint, $request_url);
+
+  $original_parameters = $parameters;
+  $compiled_parameters = array();
+  _google_analytics_counter_queue_api_request_parameters_compile($original_parameters, $compiled_parameters);
+
+  $request = OAuthRequest::from_consumer_and_token($client->getConsumer(), $client->getToken(), $endpoint['method'], $request_url, $compiled_parameters);
+  $request->sign_request($client->getSignatureMethod(), $client->getConsumer(), $client->getToken());
+
+  $http_data = '';
+  if (GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_POST == $request->get_normalized_http_method()) {
+    $url = $request->get_normalized_http_url();
+    $http_data = http_build_query($request->get_parameters());
+  }
+  else {
+    $url = $request->to_url();
+  }
+
+  if (NULL === $headers) {
+    $headers = array();
+  }
+
+  $headers = $headers + array();
+  $timeout = $timeout ? $timeout : google_analytics_counter_queue_api_http_request_timeout();
+
+  $http_options = array(
+    'headers' => $headers,
+    'method' => $request->get_normalized_http_method(),
+    'timeout' => $timeout,
+    'data' => $http_data,
+    // Do not allow any redirects to occur, this will ensure that multiple
+    // HTTP requests are not happening.
+    'max_redirects' => 0,
+  );
+
+  $http_response = drupal_http_request($url, $http_options);
+  if ('200' == $http_response->code) {
+    if (!empty($http_response->data)) {
+      $http_response->data = drupal_json_decode($http_response->data);
+    }
+  }
+  else {
+    // If the response is not an HTTP 200, log the response information allowing
+    // for further diagnosis if needed. Additionally, normalize the response data
+    // property so that all hell doesn't break loose.
+    if (!isset($http_response->data)) {
+      $http_response->data = '';
+    }
+
+    google_analytics_counter_queue_log(WATCHDOG_ERROR, 'Attempted to perform HTTP request to Google API and received a non-HTTP 200 response. Response Code: %response_code, Response Error: %response_error, Response Status Message: %response_message, Response body: %response_body', array(
+      '%response_error' => $http_response->code,
+      '%response_error' => !empty($http_response->error) ? $http_response->error : 'No error message',
+      '%response_message' => $http_response->status_message,
+      '%response_body' => $http_response->data,
+      '%response' => $http_response,
+    ));
+  }
+
+  // If the response is a HTTP 401 Unauthorized, immediately revoke the token.
+  if ('401' == $http_response->code && 'Unauthorized' == $http_response->error) {
+    global $locks;
+    // Directly use $locks and perform an isset() to verify that the lock does
+    // not exist. The lock_acquire() function does not perform or creating
+    // blocking locks and as a result we will continue to have a recursive loop.
+    if (!isset($locks['google_analytics_counter_queue_request_revoke']) && lock_acquire('google_analytics_counter_queue_request_revoke')) {
+      $client->revokeToken();
+      drupal_set_message(t('Invalid authorization credentials for Google Analytics API resulting in an automatic deauthorization and token revoke.'), 'error');
+      lock_release('google_analytics_counter_queue_request_revoke');
+    }
+  }
+
+  // Convert the response object to an array as some responses may be cached
+  // and as a result, cached objects will be converted into an array.
+  $http_response = (array) $http_response;
+
+  return $http_response;
+}
+
+/**
+ * Retrieves the endpoint information for a single or all endpoints.
+ *
+ * @param mixed $endpoint
+ *   The endpoint identifier if retrieving a single endpoint. Default value is
+ *   NULL which in turn will return all endpoints.
+ *
+ * @return mixed
+ *   Returns an array of all endpoints if no endpoint name is specified. Should
+ *   an endpoint name be specified and the endpoint exists, the endpoint
+ *   information will be returned otherwise FALSE.
+ */
+function google_analytics_counter_queue_api_endpoint_info($endpoint = NULL) {
+  $info = _google_analytics_counter_queue_api_endpoint_info();
+  return $endpoint ? (isset($info[$endpoint]) ? $info[$endpoint] : FALSE) : $info;
+}
+
+/**
+ * @return array
+ */
+function _google_analytics_counter_queue_api_endpoint_info() {
+  return array(
+    'auth/request-token' => array(
+      'host' => 'https://www.google.com',
+      'path' => 'accounts/OAuthGetRequestToken',
+      'authenticated' => FALSE,
+    ),
+    'auth/access-token' => array(
+      'host' => 'https://www.google.com',
+      'path' => 'accounts/OAuthGetAccessToken',
+      'authenticated' => FALSE,
+    ),
+    'auth/revoke-token' => array(
+      'host' => 'https://www.google.com',
+      'path' => 'accounts/AuthSubRevokeToken',
+      'authenticated' => FALSE,
+    ),
+    'analytics/web-properties' => array(
+      'path' => 'management/accounts/@account-id/webproperties',
+      'path_parameters' => array(
+        '@account-id' => '~all',
+      ),
+    ),
+    'analytics/profiles' => array(
+      'path' => 'management/accounts/@account-id/webproperties/@webproperty-id/profiles',
+      'path_parameters' => array(
+        '@account-id' => '~all',
+        '@webproperty-id' => '~all',
+      ),
+    ),
+    'analytics/data' => array(
+      'path' => 'data/ga',
+      'parameters' => array(
+        'ids' => array(),
+        'dimensions' => array(),
+        'filters' => array(),
+        'start-date' => google_analytics_counter_queue_api_data_query_start_date(),
+        'end-date' => format_date(strtotime('tomorrow'), 'custom', 'Y-m-d'),
+        'start-index' => 1,
+        'max-results' => google_analytics_counter_queue_api_data_query_max_results(),
+      ),
+    ),
+  );
+}
+
+/**
+ * Returns an array of default properties for each endpoint.
+ *
+ * @return array
+ *   An array of default properties.
+ */
+function _google_analytics_counter_queue_api_endpoint_info_defaults() {
+  return array(
+    'method' => GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_GET,
+    'host' => 'https://www.googleapis.com/analytics/v3',
+    'path' => '',
+    'path_parameters' => array(),
+    'authenticated' => TRUE,
+  );
+}
+
+/**
+ * Implements hook_google_analytics_counter_queue_api_revoked().
+ */
+function google_analytics_counter_queue_google_analytics_counter_queue_api_revoked() {
+  // TODO: Add reset of static objects (e.g. oauth_consumer token).
+  // Reset Google API oauth token data variables.
+  variable_set('google_analytics_counter_queue_api_oauth_consumer_key', NULL);
+  variable_set('google_analytics_counter_queue_api_oauth_consumer_secret', NULL);
+  variable_set('google_analytics_counter_queue_api_oauth_token', NULL);
+  variable_set('google_analytics_counter_queue_api_oauth_token_secret', NULL);
+  // Clear any and all Google Analytics Counter Queue related cached objects.
+  cache_clear_all('google_analytics_counter_queue', 'cache', TRUE);
+}
+
+if (!function_exists('node_google_analytics_counter_queue_api')) {
+  function node_google_analytics_counter_queue_api() {
+    return google_analytics_counter_queue_google_analytics_counter_queue_api();
+  }
+}
+
+if (!function_exists('statistics_google_analytics_counter_queue_api')) {
+  function statistics_google_analytics_counter_queue_api() {
+    return google_analytics_counter_queue_google_analytics_counter_queue_api();
+  }
+}
+
+if (!function_exists('rules_google_analytics_counter_queue_api')) {
+  function rules_google_analytics_counter_queue_api() {
+    return google_analytics_counter_queue_google_analytics_counter_queue_api();
   }
 }

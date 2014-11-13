@@ -40,7 +40,7 @@ function google_analytics_counter_queue_drush_command() {
  * Drush command callback for `google-analytics-counter-queue-oauth-revoke-token.`
  */
 function drush_google_analytics_counter_queue_oauth_revoke_token() {
-  if ($client = google_analytics_counter_queue_google_analytics_client()) {
+  if ($client = google_analytics_counter_queue_api_client()) {
     $client->revokeToken();
   }
 }

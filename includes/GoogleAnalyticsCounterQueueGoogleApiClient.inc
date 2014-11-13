@@ -77,24 +77,31 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
    *   Returns TRUE if authenticated, otherwise FALSE.
    */
   public function isAuthenticated() {
-    return !empty($this->token);
+    // TODO: Determine if there is a better way for handling this determination.
+    if (!empty($this->token)) {
+      if ('anonymous' != $this->token->key && 'anonymous' != $this->token->secret) {
+        return TRUE;
+      }
+    }
+    return FALSE;
   }
 
   /**
    * @return GoogleAnalyticsCounterQueueOAuthToken
+   * @throws Exception
    */
   public function getRequestToken() {
     if (empty($this->token)) {
       try {
-        $result = GoogleAnalyticsCounterQueueGoogleAnalyticsAuthentication::getRequestToken($this);
-        if (!$result->isEmpty()) {
-          $data_str = $result->getData();
-          parse_str($data_str, $data);
+        $result = google_analytics_counter_queue_api_auth_request_token($this);
+        if ('200' == $result->code && !empty($result->data)) {
+          $data = array();
+          parse_str($result->data, $data);
           $this->consumer = new GoogleAnalyticsCounterQueueOAuthToken($data['oauth_token'], $data['oauth_token_secret']);
         }
       }
       catch (Exception $exception) {
-
+        throw $exception;
       }
     }
 
@@ -105,12 +112,7 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
    *
    */
   public function obtainAuthorization() {
-    if (module_exists('overlay') && 'child' == overlay_get_mode()) {
-      overlay_close_dialog();
-      overlay_deliver_empty_page();
-    }
-
-    GoogleAnalyticsCounterQueueGoogleAnalyticsAuthentication::obtainAuthorization($this);
+    google_analytics_counter_queue_api_auth_obtain_auth($this);
   }
 
   /**
@@ -118,16 +120,26 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
    * @throws Exception
    */
   public function getAccessToken() {
-    $result =  GoogleAnalyticsCounterQueueGoogleAnalyticsAuthentication::getAccessToken($this);
-    if (!$result->isEmpty()) {
-      $data_str = $result->getData();
-      parse_str($data_str, $data);
-      $this->token = new GoogleAnalyticsCounterQueueOAuthToken($data['oauth_token'], $data['oauth_token_secret']);
+    // TODO: Add condition for access_token property so this is not happening all the time.
+    try {
+      $result = google_analytics_counter_queue_api_auth_access_token($this);
+      if (!empty($result->data)) {
+        $data = array();
+        parse_str($result->data, $data);
+        $this->token = new GoogleAnalyticsCounterQueueOAuthToken($data['oauth_token'], $data['oauth_token_secret']);
+
+        variable_set('google_analytics_counter_queue_api_oauth_token', $data['oauth_token']);
+        variable_set('google_analytics_counter_queue_api_oauth_token_secret', $data['oauth_token_secret']);
+      }
+      else {
+        // TODO: Cleanup.
+        throw new Exception(t('Unable to retrieve access token?'));
+      }
     }
-    else {
-      // TODO: Cleanup.
-      throw new Exception(t('Unable to retrieve access token?'));
+    catch (Exception $exception) {
+      throw $exception;
     }
+
     return $this->token;
   }
 
@@ -135,10 +147,11 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
    * @access public
    */
   public function revokeToken() {
-    GoogleAnalyticsCounterQueueGoogleAnalyticsAuthentication::revokeToken($this);
-    variable_set('google_analytics_counter_queue_google_analytics_oauth_consumer_key', NULL);
-    variable_set('google_analytics_counter_queue_google_analytics_oauth_consumer_secret', NULL);
-    variable_set('google_analytics_counter_queue_google_analytics_oauth_token', NULL);
-    variable_set('google_analytics_counter_queue_google_analytics_oauth_token_secret', NULL);
+    google_analytics_counter_queue_api_auth_revoke($this);
+    // Reset the client's properties that need to be.
+    $this->token = NULL;
+    $this->verifier = NULL;
+    // Notify other modules that authentication has been revoked.
+    module_invoke_all('google_analytics_counter_queue_api_revoked');
   }
 }

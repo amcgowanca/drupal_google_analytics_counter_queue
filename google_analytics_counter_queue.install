@@ -8,20 +8,20 @@
  * Implements hook_install().
  */
 function google_analytics_counter_queue_install() {
-  variable_set('google_analytics_counter_queue_cache_lifetime', NULL);
-  variable_set('google_analytics_counter_queue_google_analytics_oauth_consumer_key', NULL);
-  variable_set('google_analytics_counter_queue_google_analytics_oauth_consumer_secret', NULL);
-  variable_set('google_analytics_counter_queue_google_analytics_oauth_token', NULL);
-  variable_set('google_analytics_counter_queue_google_analytics_oauth_token_secret', NULL);
-  variable_set('google_analytics_counter_queue_google_analytics_profile_id', NULL);
+  variable_set('google_analytics_counter_queue_api_oauth_consumer_key', NULL);
+  variable_set('google_analytics_counter_queue_api_oauth_consumer_secret', NULL);
+  variable_set('google_analytics_counter_queue_oauth_token', NULL);
+  variable_set('google_analytics_counter_queue_api_oauth_token_secret', NULL);
+  variable_set('google_analytics_counter_queue_api_profile_id', NULL);
   variable_set('google_analytics_counter_queue_execute_queues_on_cron', TRUE);
-  variable_set('google_analytics_counter_queue_google_analytics_data_query_max_results', '1000');
+  variable_set('google_analytics_counter_queue_api_data_query_max_results', '1000');
   variable_set('google_analytics_counter_queue_google_analytics_queue_item_threshold', '3');
   variable_set('google_analytics_counter_queue_update_statistics_node_counter', 1);
   variable_set('google_analytics_counter_queue_queue_ignored_paths', implode("\n", array('node/*/edit')));
   variable_set('google_analytics_counter_queue_queue_process_admin_paths', 0);
   variable_set('google_analytics_counter_queue_google_analytics_data_query_start_date', '2005-01-01');
   variable_set('google_analytics_counter_queue_queue_process_multiple', 1);
+  variable_set('google_analytics_counter_queue_api_http_request_timeout', 30);
   // Drupal's queue API requires that any custom implemented queue classes are
   // defined as variables, allowing the queue class to be retrieved dynamically
   // using the variable `queue_class_{queue_name}`. This is primarily used
@@ -39,20 +39,20 @@ function google_analytics_counter_queue_install() {
  * Implements hook_uninstall().
  */
 function google_analytics_counter_queue_uninstall() {
-  variable_del('google_analytics_counter_queue_cache_lifetime');
-  variable_del('google_analytics_counter_queue_google_analytics_oauth_consumer_key');
-  variable_del('google_analytics_counter_queue_google_analytics_oauth_consumer_secret');
-  variable_del('google_analytics_counter_queue_google_analytics_oauth_token');
-  variable_del('google_analytics_counter_queue_google_analytics_oauth_token_secret');
-  variable_del('google_analytics_counter_queue_google_analytics_profile_id');
+  variable_del('google_analytics_counter_queue_api_oauth_consumer_key');
+  variable_del('google_analytics_counter_queue_api_oauth_consumer_secret');
+  variable_del('google_analytics_counter_queue_api_oauth_token');
+  variable_del('google_analytics_counter_queue_api_oauth_token_secret');
+  variable_del('google_analytics_counter_queue_api_profile_id');
   variable_del('google_analytics_counter_queue_execute_queues_on_cron');
-  variable_del('google_analytics_counter_queue_google_analytics_data_query_max_results');
+  variable_del('google_analytics_counter_queue_api_data_query_max_results');
   variable_del('google_analytics_counter_queue_google_analytics_queue_item_threshold');
   variable_del('google_analytics_counter_queue_update_statistics_node_counter');
   variable_del('google_analytics_counter_queue_queue_ignored_paths');
   variable_del('google_analytics_counter_queue_queue_process_admin_paths');
   variable_del('google_analytics_counter_queue_google_analytics_data_query_start_date');
   variable_del('google_analytics_counter_queue_queue_process_multiple');
+  variable_del('google_analytics_counter_queue_api_http_request_timeout');
   // Delete Drupal core's queue related variables to perform complete cleanup.
   variable_del('queue_class_google_analytics_counter_queue');
   variable_del('queue_class_google_analytics_counter_priority_queue');
@@ -237,7 +237,7 @@ function google_analytics_counter_queue_requirements($phase) {
       )),
     );
 
-    $client = google_analytics_counter_queue_google_analytics_client();
+    $client = google_analytics_counter_queue_api_client();
     if ($client->isAuthenticated()) {
       $requirements['google_analytics_counter_queue_authentication']['value'] = t('Authenticated');
       $requirements['google_analytics_counter_queue_authentication']['severity'] = REQUIREMENT_OK;

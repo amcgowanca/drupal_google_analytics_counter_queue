@@ -5,18 +5,6 @@
  */
 
 /**
- * Enables altering a GoogleAnalyticsCounterQueueGoogleApiQuery instance.
- *
- * This hook is executed within the `execute` method of the query,
- *
- * @param GoogleAnalyticsCounterQueueGoogleApiQuery $query
- *   The query object to alter prior to executing.
- */
-function hook_google_analytics_counter_queue_google_analytics_api_query_alter(GoogleAnalyticsCounterQueueGoogleApiQuery $query) {
-  $query->setMethod(GoogleAnalyticsCounterQueueGoogleApiQuery::HTTP_METHOD_POST);
-}
-
-/**
  * Enables modules to alter the xoauth_display_name property of HTTP requests.
  *
  * @param string $display_name
@@ -24,6 +12,13 @@ function hook_google_analytics_counter_queue_google_analytics_api_query_alter(Go
  */
 function hook_google_analytics_counter_queue_xoauth_display_name_alter(&$display_name) {
   $display_name = variable_get('site_name', $display_name);
+}
+
+/**
+ *
+ */
+function hook_google_analytics_counter_queue_api_revoked() {
+  drupal_set_message(t('Google Analytics API token has been revoked for Google Analytics Counter Queue.'), 'status');
 }
 
 /**
@@ -65,6 +60,10 @@ function hook_google_analytics_counter_queue_queue_item_processed(GoogleAnalytic
   google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Queue item @id has been processed.', array('@id' => $queue_item->getIdentifier()));
 }
 
+/**
+ * @param array $statistics_info
+ * @param array $statistics_info_header
+ */
 function hook_google_analytics_counter_queue_statistic_overview_info_alter(array &$statistics_info, array &$statistics_info_header) {
   // TODO: Add a basic example.
 }

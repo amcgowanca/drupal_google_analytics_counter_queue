@@ -84,7 +84,7 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
     ),
     '#default_value' => google_analytics_counter_queue_queue_process_multiple(),
   );
-  $form['settings']['google_analytics_counter_queue_google_analytics_data_query_max_results'] = array(
+  $form['settings']['google_analytics_counter_queue_api_data_query_max_results'] = array(
     '#type' => 'select',
     '#title' => t('Maximum number of results'),
     '#description' => t('Used to determine the number of results retrieved in a single query from Google Analytics data query.'),
@@ -95,7 +95,7 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
       '500' => '500',
       '1000' => '1000',
     ),
-    '#default_value' => google_analytics_counter_queue_google_analytics_data_query_max_results(),
+    '#default_value' => google_analytics_counter_queue_api_data_query_max_results(),
   );
   return system_settings_form($form);
 }
@@ -346,24 +346,19 @@ function google_analytics_counter_queue_admin_priority_queue_delete_multiple_con
  *   Returns the authentication form to render.
  */
 function google_analytics_counter_queue_admin_authentication_form($form, $form_state) {
-  $client = google_analytics_counter_queue_google_analytics_client();
+  $client = google_analytics_counter_queue_api_client();
   if ($client->isAuthenticated()) {
-    $query = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiWebPropertiesQuery($client);
-    $webprops = $query->execute()->getQueryResult();
-
-    $query = new GoogleAnalyticsCounterQueueGoogleAnalyticsApiProfilesQuery($client);
-    $profiles = $query->execute()->getQueryResult();
+    $webprops_response = google_analytics_counter_queue_api_request_web_properties();
+    $profiles_response = google_analytics_counter_queue_api_request_profiles();
 
     $options = array();
 
-    // TODO: This is a copy from the Google Analytics Counter module; further testing is required as this is sloppy.
-
-    $current_profile_id = google_analytics_counter_queue_google_analytics_profile_id();
+    $current_profile_id = google_analytics_counter_queue_api_profile_id();
     $current_profile = NULL;
 
-    foreach ($profiles as $profile) {
+    foreach ($profiles_response['data']['items'] as $profile) {
       $webprop = NULL;
-      foreach ($webprops as $webprop_value) {
+      foreach ($webprops_response['data']['items'] as $webprop_value) {
         if ($webprop_value['id'] == $profile['webPropertyId']) {
           $webprop = $webprop_value;
         }
@@ -414,7 +409,7 @@ function google_analytics_counter_queue_admin_authentication_form($form, $form_s
       '#type' => 'textfield',
       '#title' => t('Google Apps for Business (optional)'),
       '#description' => t('Provide the domain name (e.g. google.com) if you domain is registered with Google Apps for Business. Otherwise, leave it blank.'),
-      '#default_value' => google_analytics_counter_queue_google_analytics_profile_id(),
+      '#default_value' => google_analytics_counter_queue_api_profile_id(),
     );
     $form['settings']['submit'] = array(
       '#type' => 'submit',
@@ -436,19 +431,20 @@ function google_analytics_counter_queue_admin_authentication_form_submit($form, 
   $op = isset($form_state['values']['op']) ? $form_state['values']['op'] : '';
   switch ($op) {
     case t('Authorize account'):
-      $client = google_analytics_counter_queue_google_analytics_client();
+      $client = google_analytics_counter_queue_api_client();
       $request_token = $client->getRequestToken();
       $_SESSION['google_analytics_counter_queue']['oauth']['token'] = $request_token;
       $_SESSION['google_analytics_counter_queue']['destination'] = current_path();
       $client->obtainAuthorization();
       break;
     case t('Save settings'):
-      variable_set('google_analytics_counter_queue_google_analytics_profile_id', $form_state['values']['google_analytics_counter_queue_profile_id']);
+      variable_set('google_analytics_counter_queue_api_profile_id', $form_state['values']['google_analytics_counter_queue_profile_id']);
       drupal_set_message(t('Google Analytics authentication settings have been successfully saved.'));
       break;
     case t('Revoke access token'):
-      $client = google_analytics_counter_queue_google_analytics_client();
-      $client->revokeToken();
+      if ($client = google_analytics_counter_queue_api_client()) {
+        $client->revokeToken();
+      }
       drupal_set_message(t('Google Authentication access token has been successfully revoked.'));
       break;
   }
@@ -565,9 +561,11 @@ function google_analytics_counter_queue_admin_statistics($form, &$form_state) {
       )),
     );
   }
+
   // Allow for other modules to alter the table related data prior to sorting
   // and rendering. This allows for things like node paths to be translated into
   // the respective node titles.
+  google_analytics_counter_queue_module_include();
   drupal_alter('google_analytics_counter_queue_statistics_overview', $statistic_rows, $statistic_headers);
   // Sort the headers for the tableselect as they may have been altered and
   // therefore the weights may have changed.
