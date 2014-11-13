@@ -346,6 +346,7 @@ class GoogleAnalyticsCounterQueueQueueItem {
         $this->id = $result;
       }
 
+      google_analytics_counter_queue_module_include();
       module_invoke_all('google_analytics_counter_queue_queue_item_' . $op, $this);
 
       db_ignore_slave();

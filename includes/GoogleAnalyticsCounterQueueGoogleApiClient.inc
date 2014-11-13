@@ -152,6 +152,7 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
     $this->token = NULL;
     $this->verifier = NULL;
     // Notify other modules that authentication has been revoked.
+    google_analytics_counter_queue_module_include();
     module_invoke_all('google_analytics_counter_queue_api_revoked');
   }
 }

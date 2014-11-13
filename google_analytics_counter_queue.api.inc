@@ -5,6 +5,16 @@
  */
 
 /**
+ * @return array
+ */
+function hook_google_analytics_counter_queue_api() {
+  return array(
+    'version' => '1.0',
+    'path' => drupal_get_path('module', 'google_analytics_counter_queue'),
+  );
+}
+
+/**
  * Enables modules to alter the xoauth_display_name property of HTTP requests.
  *
  * @param string $display_name

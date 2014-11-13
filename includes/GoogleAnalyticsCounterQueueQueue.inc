@@ -201,6 +201,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
       }
     }
 
+    google_analytics_counter_queue_module_include();
     module_invoke_all('google_analytics_counter_queue_queue_item_delete', $item);
   }
 

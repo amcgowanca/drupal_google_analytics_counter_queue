@@ -870,44 +870,6 @@ function google_analytics_counter_queue_oauth_callback() {
   drupal_goto('admin/config/system/google-analytics-counter-queue/authentication');
 }
 
-/**
- * Checks the specified path to determine if it is a valid Drupal path.
- *
- * Note that should an external URL is specified as the `$path`, this function
- * will always return FALSE.
- *
- * @param string $path
- *   The path to validate whether or not it exists.
- *
- * @return boolean
- *   Returns TRUE if the specified path is valid, otherwise FALSE.
- */
-function google_analytics_counter_queue_valid_path($path) {
-  static $static_fast_cache = array();
-
-  if (!isset($static_fast_cache[$path])) {
-    if (!url_is_external($path)) {
-      if (FALSE !== ($source = drupal_lookup_path('source', $path))) {
-        $static_fast_cache[$path] = TRUE;
-      }
-      else if (FALSE !== ($alias = drupal_lookup_path('alias', $path))) {
-        $static_fast_cache[$path] = TRUE;
-      }
-      else {
-        if (FALSE !== ($router_item = menu_get_item($path))) {
-          $static_fast_cache[$path] = TRUE;
-        }
-      }
-    }
-  }
-
-  if (!isset($static_fast_cache[$path])) {
-    $static_fast_cache[$path] = FALSE;
-  }
-
-  return $static_fast_cache[$path];
-}
-
 
 /**
  * Returns an array of valid select options for positioning of queue item.
@@ -1171,6 +1133,20 @@ function google_analytics_counter_queue_google_analytics_queue_item_threshold() 
 }
 
 /**
+ * @return null
+ */
+function google_analytics_counter_queue_queue_process_multiple() {
+  return variable_get('google_analytics_counter_queue_queue_process_multiple', 1);
+}
+
+/**
+ * @return int
+ */
+function google_analytics_counter_queue_api_http_request_timeout() {
+  return (int) variable_get('google_analytics_counter_queue_api_http_request_timeout', 30);
+}
+
+/**
  * Generates batch information for a specified array of queue item identifiers.
  *
  * @param array $queue_item_ids
@@ -1246,80 +1222,6 @@ function google_analytics_counter_queue_process_queue_batch_op($item_id, &$conte
   return TRUE;
 }
 
-function google_analytics_counter_queue_queue_process_multiple() {
-  return variable_get('google_analytics_counter_queue_queue_process_multiple', 1);
-}
-
-function _google_analytics_counter_queue_api_request_parameters_compile(array $parameters, array &$compiled) {
-  // TODO: Re-implement so that this isn't such a disaster, but it works for now.
-  foreach ($parameters as $param_name => $param_value) {
-    if (is_array($param_value)) {
-      foreach ($param_value as $key => $value) {
-        if (is_array($value)) {
-          foreach ($value as $k => $v) {
-            if (is_array($v)) {
-              if (isset($v['value'])) {
-                $val = $v['value'];
-                if (isset($v['operator'])) {
-                  $op = $v['operator'];
-                }
-              }
-              else {
-                continue;
-              }
-            }
-            else {
-              $val = $v;
-            }
-
-            $op = isset($op) ? $op : '==';
-            $compiled[$param_name][] = $key . $op . $val;
-          }
-        }
-        else {
-          // TODO: Figure out this case.
-        }
-      }
-
-      $compiled[$param_name] = implode(',', $compiled[$param_name]);
-    }
-    else {
-      $compiled[$param_name] = $param_value;
-    }
-  }
-  return $compiled;
-}
-
-/**
- * Returns the node identifier should the path be a node viewing path.
- *
- * Note: This function returns FALSE for all node action or local task paths
- * such as node/[nid]/edit.
- *
- * Furthermore, a node alias may be specified as $path which will perform a path
- * normalization allowing for the node system path to be retrieved and parsed.
- *
- * @param string $path
- *   The path to attempt to retrieve the node id for.
- *
- * @return mixed
- *   Returns the node id as an integer, otherwise FALSE.
- */
-function google_analytics_counter_queue_path_is_node_view($path) {
-  $path = drupal_get_normal_path($path);
-  if (preg_match('|node/([0-9]+)?|', $path, $matches)) {
-    return isset($matches[1]) && is_numeric($matches[1]) ? intval($matches[1]) : FALSE;
-  }
-  return FALSE;
-}
-
-/**
- * @return int
- */
-function google_analytics_counter_queue_api_http_request_timeout() {
-  return (int) variable_get('google_analytics_counter_queue_api_http_request_timeout', 30);
-}
-
 /**
  * Redirects the end user to Google Accounts to provide authorization.
  */
@@ -1345,6 +1247,10 @@ function google_analytics_counter_queue_api_auth_obtain_auth(GoogleAnalyticsCoun
   ));
 }
 
+/**
+ * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ * @return array
+ */
 function google_analytics_counter_queue_api_auth_request_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
   $parameters = array(
     'scope' => 'https://www.googleapis.com/auth/analytics.readonly',
@@ -1355,6 +1261,10 @@ function google_analytics_counter_queue_api_auth_request_token(GoogleAnalyticsCo
   return $response;
 }
 
+/**
+ * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ * @return array
+ */
 function google_analytics_counter_queue_api_auth_access_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
   $parameters = array(
     'oauth_verifier' => $client->getVerifier(),
@@ -1363,6 +1273,10 @@ function google_analytics_counter_queue_api_auth_access_token(GoogleAnalyticsCou
   return $response;
 }
 
+/**
+ * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ * @return array
+ */
 function google_analytics_counter_queue_api_auth_revoke(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
   $response = google_analytics_counter_queue_api_request($client, 'auth/revoke-token');
   return $response;
@@ -1600,6 +1514,51 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
 }
 
 /**
+ * @param array $parameters
+ * @param array $compiled
+ * @return array
+ */
+function _google_analytics_counter_queue_api_request_parameters_compile(array $parameters, array &$compiled) {
+  // TODO: Re-implement so that this isn't such a disaster, but it works for now.
+  foreach ($parameters as $param_name => $param_value) {
+    if (is_array($param_value)) {
+      foreach ($param_value as $key => $value) {
+        if (is_array($value)) {
+          foreach ($value as $k => $v) {
+            if (is_array($v)) {
+              if (isset($v['value'])) {
+                $val = $v['value'];
+                if (isset($v['operator'])) {
+                  $op = $v['operator'];
+                }
+              }
+              else {
+                continue;
+              }
+            }
+            else {
+              $val = $v;
+            }
+
+            $op = isset($op) ? $op : '==';
+            $compiled[$param_name][] = $key . $op . $val;
+          }
+        }
+        else {
+          // TODO: Figure out this case.
+        }
+      }
+
+      $compiled[$param_name] = implode(',', $compiled[$param_name]);
+    }
+    else {
+      $compiled[$param_name] = $param_value;
+    }
+  }
+  return $compiled;
+}
+
+/**
  * Retrieves the endpoint information for a single or all endpoints.
  *
  * @param mixed $endpoint
@@ -1681,32 +1640,88 @@ function _google_analytics_counter_queue_api_endpoint_info_defaults() {
 }
 
 /**
- * Implements hook_google_analytics_counter_queue_api_revoked().
+ * Checks the specified path to determine if it is a valid Drupal path.
+ *
+ * Note that should an external URL is specified as the `$path`, this function
+ * will always return FALSE.
+ *
+ * @param string $path
+ *   The path to validate whether or not it exists.
+ *
+ * @return boolean
+ *   Returns TRUE if the specified path is valid, otherwise FALSE.
  */
-function google_analytics_counter_queue_google_analytics_counter_queue_api_revoked() {
-  // TODO: Add reset of static objects (e.g. oauth_consumer token).
-  // Reset Google API oauth token data variables.
-  variable_set('google_analytics_counter_queue_api_oauth_consumer_key', NULL);
-  variable_set('google_analytics_counter_queue_api_oauth_consumer_secret', NULL);
-  variable_set('google_analytics_counter_queue_api_oauth_token', NULL);
-  variable_set('google_analytics_counter_queue_api_oauth_token_secret', NULL);
-  // Clear any and all Google Analytics Counter Queue related cached objects.
-  cache_clear_all('google_analytics_counter_queue', 'cache', TRUE);
+function google_analytics_counter_queue_valid_path($path) {
+  static $static_fast_cache = array();
+
+  if (!isset($static_fast_cache[$path])) {
+    if (!url_is_external($path)) {
+      if (FALSE !== ($source = drupal_lookup_path('source', $path))) {
+        $static_fast_cache[$path] = TRUE;
+      }
+      else if (FALSE !== ($alias = drupal_lookup_path('alias', $path))) {
+        $static_fast_cache[$path] = TRUE;
+      }
+      else {
+        if (FALSE !== ($router_item = menu_get_item($path))) {
+          $static_fast_cache[$path] = TRUE;
+        }
+      }
+    }
+  }
+
+  if (!isset($static_fast_cache[$path])) {
+    $static_fast_cache[$path] = FALSE;
+  }
+
+  return $static_fast_cache[$path];
+}
+
+/**
+ * Returns the node identifier should the path be a node viewing path.
+ *
+ * Note: This function returns FALSE for all node action or local task paths
+ * such as node/[nid]/edit.
+ *
+ * Furthermore, a node alias may be specified as $path which will perform a path
+ * normalization allowing for the node system path to be retrieved and parsed.
+ *
+ * @param string $path
+ *   The path to attempt to retrieve the node id for.
+ *
+ * @return mixed
+ *   Returns the node id as an integer, otherwise FALSE.
+ */
+function google_analytics_counter_queue_path_is_node_view($path) {
+  $path = drupal_get_normal_path($path);
+  if (preg_match('|node/([0-9]+)?|', $path, $matches)) {
+    return isset($matches[1]) && is_numeric($matches[1]) ? intval($matches[1]) : FALSE;
+  }
+  return FALSE;
 }
 
 if (!function_exists('node_google_analytics_counter_queue_api')) {
+  /**
+   * Implements hook_google_analytics_counter_queue_api().
+   */
   function node_google_analytics_counter_queue_api() {
     return google_analytics_counter_queue_google_analytics_counter_queue_api();
   }
 }
 
 if (!function_exists('statistics_google_analytics_counter_queue_api')) {
+  /**
+   * Implements hook_google_analytics_counter_queue_api().
+   */
   function statistics_google_analytics_counter_queue_api() {
     return google_analytics_counter_queue_google_analytics_counter_queue_api();
   }
 }
 
 if (!function_exists('rules_google_analytics_counter_queue_api')) {
+  /**
+   * Implements hook_google_analytics_counter_queue_api().
+   */
   function rules_google_analytics_counter_queue_api() {
     return google_analytics_counter_queue_google_analytics_counter_queue_api();
   }
