@@ -5,10 +5,16 @@
  */
 
 /**
+ * Returns the concatenated profile name and id.
  *
+ * @param array $variables
+ *   An array of variables used for theming.
+ *
+ * @return string
+ *   The Google Analytics profile label.
  */
 function theme_google_analytics_counter_queue_google_analytics_profile_label($variables) {
-  return $variables['profile']['name'] . ' (' . $variables['profile']['id'] . ')';
+  return check_plain($variables['profile']['name']) . ' (' . check_plain($variables['profile']['id']) . ')';
 }
 
 /**

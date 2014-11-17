@@ -283,11 +283,13 @@ function google_analytics_counter_queue_execute_queues_on_cron() {
  * Queue worker for processing individual queue items.
  *
  * @param mixed $queue_item
- *   The queue item that is to be processed.
+ *   The queue item that is to be processed. An array of queue items can be
+ *   specified to process one or more items in a single API request.
  */
 function google_analytics_counter_queue_process_queue($queue_item) {
+  // TODO: Document and clean up code.
   $queue_items = is_array($queue_item) ? $queue_item : array($queue_item);
-
+  // Retrieve the API client instance.
   $client = google_analytics_counter_queue_api_client();
 
   $total_records = NULL;
@@ -399,10 +401,16 @@ function google_analytics_counter_queue_process_queue($queue_item) {
 }
 
 /**
+ * Processes the path view information and updates all required statistics.
+ *
  * @param array $queue_items
+ *   An array of queue items processed.
  * @param array $pathview_info
+ *   An array of path view information containing the page view data used to
+ *   update the total count for a particular queue item's path statistics.
  */
 function _google_analytics_counter_queue_process_queue_process_statistics(array &$queue_items, array &$pathview_info) {
+  // TODO: Document and clean up code.
   module_load_include('inc', 'google_analytics_counter_queue', 'google_analytics_counter_queue.statistics');
   foreach ($queue_items as $k => &$queue_item) {
     $queue_item_normal_path = drupal_get_normal_path($queue_item->getPath());
@@ -1198,7 +1206,7 @@ function google_analytics_counter_queue_process_queue_batch(array $queue_item_id
 }
 
 /**
- * Queue item batch operating callback. Processes a single queue item.
+ * Queue item batch operation callback. Processes a single queue item.
  *
  * @param int $item_id
  *   The id of the queue item to process.
@@ -1249,11 +1257,12 @@ function google_analytics_counter_queue_process_queue_batch_op($item_id, &$conte
  * Redirects the end user to Google Accounts to provide authorization.
  */
 function google_analytics_counter_queue_api_auth_obtain_auth(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
+  // If the overlay module is enabled, let's close the dialog.
   if (module_exists('overlay') && 'child' == overlay_get_mode()) {
     overlay_close_dialog();
     overlay_deliver_empty_page();
   }
-
+  // Retrieve the consumer token from the API client instance.
   $consumer_token = $client->getConsumer()->key;
   if (empty($consumer_token)) {
     google_analytics_counter_queue_log(WATCHDOG_ALERT, 'Attempting to obtain authorization from Google accounts, however, the consumer oauth key is empty.');
@@ -1261,7 +1270,9 @@ function google_analytics_counter_queue_api_auth_obtain_auth(GoogleAnalyticsCoun
     drupal_goto('admin/config/system/google-analytics-counter-queue/authentication');
     return;
   }
-
+  // Redirect the user to the Google Accounts API authorization form. If the
+  // user provides access, he or she will be redirected and returned to the
+  // oauth callback page at /google-analytics-counter-queue/oauth.
   drupal_goto('https://www.google.com/accounts/OAuthAuthorizeToken', array(
     'query' => array(
       'oauth_token' => $consumer_token,
@@ -1271,8 +1282,13 @@ function google_analytics_counter_queue_api_auth_obtain_auth(GoogleAnalyticsCoun
 }
 
 /**
+ * Performs an API request to retrieve the request token.
+ *
  * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ *   The API client instance.
+ *
  * @return array
+ *   Returns the HTTP response data.
  */
 function google_analytics_counter_queue_api_auth_request_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
   $parameters = array(
@@ -1280,35 +1296,66 @@ function google_analytics_counter_queue_api_auth_request_token(GoogleAnalyticsCo
     'xoauth_displayname' => google_analytics_counter_queue_xoauth_display_name(),
     'oauth_callback' => google_analytics_counter_queue_oauth_callback_url(),
   );
-  $response = google_analytics_counter_queue_api_request($client, 'auth/request-token', $parameters);
-  return $response;
+  return google_analytics_counter_queue_api_request($client, 'auth/request-token', $parameters);
 }
 
 /**
+ * Performs an API request to retrieve the access token.
+ *
  * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ *   The API client instance.
+ *
  * @return array
+ *   Returns the HTTP response data.
  */
 function google_analytics_counter_queue_api_auth_access_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
-  $parameters = array(
-    'oauth_verifier' => $client->getVerifier(),
-  );
-  $response = google_analytics_counter_queue_api_request($client, 'auth/access-token', $parameters);
-  return $response;
+  $parameters = array('oauth_verifier' => $client->getVerifier());
+  return google_analytics_counter_queue_api_request($client, 'auth/access-token', $parameters);
 }
 
 /**
+ * Performs an API request to revoke the access token.
+ *
  * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ *   The API client instance.
+ *
  * @return array
+ *   Returns the HTTP response data.
  */
 function google_analytics_counter_queue_api_auth_revoke(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
-  $response = google_analytics_counter_queue_api_request($client, 'auth/revoke-token');
-  return $response;
+  return google_analytics_counter_queue_api_request($client, 'auth/revoke-token');
 }
 
 /**
+ * Performs an API request to the Google Analytics data endpoint.
  *
+ * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
+ *   The API client instance.
+ * @param mixed $ids
+ *   The profile ids to retrieve data from. Default value is NULL, however, the
+ *   Google Analytics API endpoint requires this parameter.
+ * @param array $dimensions
+ *   An array of dimensions to retrieve.
+ * @param array $metrics
+ *   An array of metrics to retrieve.
+ * @param array $filters
+ *   An array of filters to apply to the data query.
+ * @param string $start_date
+ *   The start date in YYYY-MM-DD format for data query filtering.
+ * @param string $end_date
+ *   The end date in YYYY-MM-DD format for data query filtering.
+ * @param int $start_index
+ *   The starting index of results to retrieve. Default value is 0.
+ * @param int $max_results
+ *   The maximum number of results to retrieve.
+ *
+ * @return array
+ *   Returns the HTTP response data.
+ *
+ * @see https://developers.google.com/analytics/devguides/reporting/core/v3/
  */
 function google_analytics_counter_queue_api_request_data(GoogleAnalyticsCounterQueueGoogleApiClient $client, $ids = NULL, array $dimensions = array(), array $metrics = array(), array $filters = array(), $start_date = NULL, $end_date = NULL, $start_index = 0, $max_results = NULL) {
+  // TODO: Cleanup and restructure where appropriate.
   $parameters = array(
     'ids' => 'ga:' . $ids,
     'dimensions' => implode(',', $dimensions),
@@ -1351,14 +1398,23 @@ function google_analytics_counter_queue_api_request_data(GoogleAnalyticsCounterQ
     }
   }
 
-  $response = google_analytics_counter_queue_api_request($client, 'analytics/data', $parameters, NULL, 120);
-  return $response;
+  return google_analytics_counter_queue_api_request($client, 'analytics/data', $parameters);
 }
 
 /**
+ * Performs an API request to retrieve Google Analytic Web Properties.
  *
- * @param null $account_id
+ * Upon a successful HTTP request, should the response be OK (HTTP 200), the
+ * data is cached to the key below permanently until caches flushed.
+ *   * `google_analytics_counter_queue:api:analytics/web-properties`
+ *
+ * @param string $account_id
+ *   The account id to retrieve web properties for. Default NULL.
+ *
  * @return array
+ *   Returns the HTTP response data. Returns NULL if the request was not
+ *   successful and the `google_analytics_counter_queue_api_request` returned
+ *   FALSE.
  */
 function google_analytics_counter_queue_api_request_web_properties($account_id = NULL) {
   $cache = cache_get('google_analytics_counter_queue:api:analytics/web-properties');
@@ -1369,11 +1425,13 @@ function google_analytics_counter_queue_api_request_web_properties($account_id =
     }
 
     $client = google_analytics_counter_queue_api_client();
-
     if ($response = google_analytics_counter_queue_api_request($client, 'analytics/web-properties', $parameters)) {
       if ('200' == $response['code'] && !empty($response['data'])) {
         cache_set('google_analytics_counter_queue:api:analytics/web-properties', $response);
       }
+    }
+    else {
+      $response = NULL;
     }
   }
   else {
@@ -1383,9 +1441,21 @@ function google_analytics_counter_queue_api_request_web_properties($account_id =
 }
 
 /**
+ * Performs an API request to retrieve Google Analytic Profiles.
+ *
+ * Upon a successful HTTP request, should the response be OK (HTTP 200), the
+ * data is cached to the key below permanently until caches flushed.
+ *   * `google_analytics_counter_queue:api:analytics/profiles`
+ *
  * @param string $account_id
+ *   The account id to retrieve the profiles from.
  * @param string $profile_id
+ *   The profile id to retrieve the information for specifically. Default NULL.
+ *
  * @return array
+ *   Returns the HTTP response data. Returns NULL if the request was not
+ *   successful and the `google_analytics_counter_queue_api_request` returned
+ *   FALSE.
  */
 function google_analytics_counter_queue_api_request_profiles($account_id = NULL, $profile_id = NULL) {
   // TODO: Take into account $account_id and $profile_id for caching.
@@ -1400,11 +1470,13 @@ function google_analytics_counter_queue_api_request_profiles($account_id = NULL,
     }
 
     $client = google_analytics_counter_queue_api_client();
-
     if ($response = google_analytics_counter_queue_api_request($client, 'analytics/profiles', $parameters)) {
       if ('200' == $response['code'] && !empty($response['code'])) {
         cache_set('google_analytics_counter_queue:api:analytics/profiles', $response);
       }
+    }
+    else {
+      $response = NULL;
     }
   }
   else {
@@ -1415,11 +1487,22 @@ function google_analytics_counter_queue_api_request_profiles($account_id = NULL,
 }
 
 /**
+ * Performs an HTTP request to the API.
+ *
  * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
- * @param $endpoint_name
+ *   The client instance.
+ * @param string $endpoint_name
+ *   The name of the endpoint.
  * @param array $parameters
+ *   The request parameters.
  * @param array $headers
- * @return array
+ *   An array of HTTP headers.
+ * @param int $timeout
+ *   The HTTP timeout value. Default is NULL and therefore the configured HTTP
+ *   timeout value will be used.
+ *
+ * @return mixed
+ *   Returns the HTTP response data as an array if successful, otherwise FALSE.
  */
 function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueGoogleApiClient $client, $endpoint_name, array $parameters = array(), array $headers = array(), $timeout = NULL) {
   $endpoint = google_analytics_counter_queue_api_endpoint_info($endpoint_name);
@@ -1429,8 +1512,8 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
     return FALSE;
   }
 
+  // Add the name of the endpoint to the endpoint info array.
   $endpoint['name'] = $endpoint_name;
-
   // Ensure that the $endpoint information contains all default properties.
   $endpoint = $endpoint + _google_analytics_counter_queue_api_endpoint_info_defaults();
 
@@ -1461,8 +1544,7 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
   drupal_alter('google_analytics_counter_queue_api_request', $parameters, $endpoint, $request_url);
 
   $original_parameters = $parameters;
-  $compiled_parameters = array();
-  _google_analytics_counter_queue_api_request_parameters_compile($original_parameters, $compiled_parameters);
+  $compiled_parameters = _google_analytics_counter_queue_api_request_parameters_compile($original_parameters);
 
   $request = OAuthRequest::from_consumer_and_token($client->getConsumer(), $client->getToken(), $endpoint['method'], $request_url, $compiled_parameters);
   $request->sign_request($client->getSignatureMethod(), $client->getConsumer(), $client->getToken());
@@ -1532,17 +1614,21 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
   // Convert the response object to an array as some responses may be cached
   // and as a result, cached objects will be converted into an array.
   $http_response = (array) $http_response;
-
   return $http_response;
 }
 
 /**
+ * Compiles the API parameters into a single dimension array.
+ *
  * @param array $parameters
- * @param array $compiled
+ *   The original parameters to process.
+ *
  * @return array
+ *   Returns the "compiled" parameters.
  */
-function _google_analytics_counter_queue_api_request_parameters_compile(array $parameters, array &$compiled) {
+function _google_analytics_counter_queue_api_request_parameters_compile(array $parameters) {
   // TODO: Re-implement so that this isn't such a disaster, but it works for now.
+  $compiled = array();
   foreach ($parameters as $param_name => $param_value) {
     if (is_array($param_value)) {
       foreach ($param_value as $key => $value) {
@@ -1599,7 +1685,10 @@ function google_analytics_counter_queue_api_endpoint_info($endpoint = NULL) {
 }
 
 /**
+ * Returns an array of all endpoint information.
+ *
  * @return array
+ *   An associative array of endpoint information.
  */
 function _google_analytics_counter_queue_api_endpoint_info() {
   return array(
