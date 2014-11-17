@@ -72,26 +72,39 @@ function drush_google_analytics_counter_queue_run($queue_name = '') {
     return drush_log(dt('The specified queue name, @queue, is not defined by Google Analytics Counter Queue.', array('@queue' => $queue_name)), 'error');
   }
 
+  @ignore_user_abort(TRUE);
+  drupal_set_time_limit(0);
+
   $queue = DrupalQueue::get($queue_name);
-  if (drush_get_option('multiple', FALSE)) {
-    $i = 0;
-    $items = array();
-    $multiple = (int) drush_get_option('multiple', google_analytics_counter_queue_queue_process_multiple());
-    while (($item = $queue->claimItem()) && $i < $multiple) {
-      $items[] = $item;
-      $i++;
+  $lock_name = 'google_analytics_counter_queue_run:' . $queue_name;
+  if (lock_acquire($lock_name)) {
+    if (drush_get_option('multiple', FALSE)) {
+      $i = 0;
+      $items = array();
+      $multiple = (int) drush_get_option('multiple', google_analytics_counter_queue_queue_process_multiple());
+      while (($item = $queue->claimItem()) && $i < $multiple) {
+        $items[] = $item;
+        $i++;
+      }
+
+      google_analytics_counter_queue_process_queue($items);
+      while ($item = array_pop($items)) {
+        $queue->deleteItem($item);
+      }
+    }
+    else {
+      // TODO: Add time, option to ignore.
+      while ($item = $queue->claimItem()) {
+        google_analytics_counter_queue_process_queue($item);
+        $queue->deleteItem($item);
+      }
     }
 
-    google_analytics_counter_queue_process_queue($items);
-    while ($item = array_pop($items)) {
-      $queue->deleteItem($item);
-    }
+    lock_release($lock_name);
   }
   else {
-    // TODO: Add time, option to ignore.
-    while ($item = $queue->claimItem()) {
-      google_analytics_counter_queue_process_queue($item);
-      $queue->deleteItem($item);
+    if (drush_get_option('verbose')) {
+      drush_log(dt('You cannot this queue while another process is running.'), 'error');
     }
   }
 }
