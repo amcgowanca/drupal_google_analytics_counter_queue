@@ -1585,7 +1585,7 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
 
   $http_response = drupal_http_request($url, $http_options);
   if ('200' == $http_response->code) {
-    if (!empty($http_response->data)) {
+    if ($endpoint['json'] && !empty($http_response->data)) {
       $http_response->data = drupal_json_decode($http_response->data);
     }
   }
@@ -1597,17 +1597,19 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
       $http_response->data = '';
     }
 
-    google_analytics_counter_queue_log(WATCHDOG_ERROR, 'Attempted to perform HTTP request to Google API and received a non-HTTP 200 response. Response Code: %response_code, Response Error: %response_error, Response Status Message: %response_message, Response body: %response_body', array(
-      '%response_error' => $http_response->code,
-      '%response_error' => !empty($http_response->error) ? $http_response->error : 'No error message',
-      '%response_message' => $http_response->status_message,
-      '%response_body' => $http_response->data,
-      '%response' => $http_response,
-    ));
+    if ('auth/revoke-token' != $endpoint['name']) {
+      google_analytics_counter_queue_log(WATCHDOG_ERROR, 'Attempted to perform HTTP request to Google API and received a non-HTTP 200 response. Response Code: %response_code, Response Error: %response_error, Response Status Message: %response_message, Response body: %response_body', array(
+        '%response_error' => $http_response->code,
+        '%response_error' => !empty($http_response->error) ? $http_response->error : 'No error message',
+        '%response_message' => $http_response->status_message,
+        '%response_body' => $http_response->data,
+        '%response' => $http_response,
+      ));
+    }
   }
 
   // If the response is a HTTP 401 Unauthorized, immediately revoke the token.
-  if ('401' == $http_response->code && 'Unauthorized' == $http_response->error) {
+  if ('401' == $http_response->code && 'Unauthorized' == $http_response->error && 'auth/revoke-token' != $endpoint['name']) {
     global $locks;
     // Directly use $locks and perform an isset() to verify that the lock does
     // not exist. The lock_acquire() function does not perform or creating
@@ -1704,16 +1706,19 @@ function _google_analytics_counter_queue_api_endpoint_info() {
       'host' => 'https://www.google.com',
       'path' => 'accounts/OAuthGetRequestToken',
       'authenticated' => FALSE,
+      'json' => FALSE,
     ),
     'auth/access-token' => array(
       'host' => 'https://www.google.com',
       'path' => 'accounts/OAuthGetAccessToken',
       'authenticated' => FALSE,
+      'json' => FALSE,
     ),
     'auth/revoke-token' => array(
       'host' => 'https://www.google.com',
       'path' => 'accounts/AuthSubRevokeToken',
       'authenticated' => FALSE,
+      'json' => FALSE,
     ),
     'analytics/web-properties' => array(
       'path' => 'management/accounts/@account-id/webproperties',
@@ -1756,6 +1761,8 @@ function _google_analytics_counter_queue_api_endpoint_info_defaults() {
     'path' => '',
     'path_parameters' => array(),
     'authenticated' => TRUE,
+    'parameters' => array(),
+    'json' => TRUE,
   );
 }
 

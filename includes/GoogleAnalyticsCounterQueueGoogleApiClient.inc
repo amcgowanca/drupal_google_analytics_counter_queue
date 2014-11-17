@@ -94,9 +94,9 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
     if (empty($this->token)) {
       try {
         $result = google_analytics_counter_queue_api_auth_request_token($this);
-        if ('200' == $result->code && !empty($result->data)) {
+        if ('200' == $result['code'] && !empty($result['data'])) {
           $data = array();
-          parse_str($result->data, $data);
+          parse_str($result['data'], $data);
           $this->consumer = new GoogleAnalyticsCounterQueueOAuthToken($data['oauth_token'], $data['oauth_token_secret']);
         }
       }
@@ -123,9 +123,9 @@ class GoogleAnalyticsCounterQueueGoogleApiClient {
     // TODO: Add condition for access_token property so this is not happening all the time.
     try {
       $result = google_analytics_counter_queue_api_auth_access_token($this);
-      if (!empty($result->data)) {
+      if (!empty($result['data'])) {
         $data = array();
-        parse_str($result->data, $data);
+        parse_str($result['data'], $data);
         $this->token = new GoogleAnalyticsCounterQueueOAuthToken($data['oauth_token'], $data['oauth_token_secret']);
 
         variable_set('google_analytics_counter_queue_api_oauth_token', $data['oauth_token']);

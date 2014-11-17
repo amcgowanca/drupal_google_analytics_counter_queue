@@ -8,7 +8,6 @@ dependencies[] = oauth_common
 dependencies[] = statistics
 
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiClient.inc
-files[] = includes/GoogleAnalyticsCounterQueueGoogleApiQuery.inc
 files[] = includes/GoogleAnalyticsCounterQueueOAuthToken.inc
 files[] = includes/GoogleAnalyticsCounterQueuePriorityQueue.inc
 files[] = includes/GoogleAnalyticsCounterQueueQueue.inc

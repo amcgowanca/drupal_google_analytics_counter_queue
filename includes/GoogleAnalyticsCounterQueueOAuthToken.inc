@@ -1,8 +1,12 @@
 <?php
 /**
  * @file
+ * GoogleAnalyticsCounterQueueOAuthToken.inc
  */
 
+/**
+ * Class GoogleAnalyticsCounterQueueOAuthToken
+ */
 class GoogleAnalyticsCounterQueueOAuthToken extends OAuthToken implements Serializable {
   public function serialize() {
     return serialize(array(

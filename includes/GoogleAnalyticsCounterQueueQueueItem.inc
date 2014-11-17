@@ -5,16 +5,17 @@
  */
 
 /**
- * Class GoogleAnalyticsCounterQueueQueueItem
+ * Represents a single queue item.
  */
 class GoogleAnalyticsCounterQueueQueueItem {
   /**
+   * Creates a new instance from a queue item stdClass object.
+   *
    * @access public
    *
    * @param stdClass $item
    *   An stdClass instance which contains the required properties for creation
    *   and instantiation of a new GoogleAnalyticsCounterQueueQueueItem instance.
-   *
    * @param GoogleAnalyticsCounterQueueQueue $queue
    *   The queue which this item belongs too.
    *
