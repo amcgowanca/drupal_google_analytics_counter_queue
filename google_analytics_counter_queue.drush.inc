@@ -46,6 +46,15 @@ function drush_google_analytics_counter_queue_oauth_revoke_token() {
 }
 
 /**
+ * Truncates the statistic related database tables.
+ */
+function drush_google_analytics_counter_queue_reset_statistics() {
+  foreach (array('google_analytics_counter_queue_statistics', 'google_analytics_counter_queue_statistics_path') as $table) {
+    db_truncate($table)->execute();
+  }
+}
+
+/**
  * Drush callback for processing a single queue, specified by its name.
  *
  * When the `--multiple` option exists, it may exist as a boolean (without a
@@ -74,7 +83,6 @@ function drush_google_analytics_counter_queue_run($queue_name = '') {
     }
 
     google_analytics_counter_queue_process_queue($items);
-
     while ($item = array_pop($items)) {
       $queue->deleteItem($item);
     }
@@ -89,17 +97,10 @@ function drush_google_analytics_counter_queue_run($queue_name = '') {
 }
 
 /**
- * Truncates the statistic related database tables.
- */
-function drush_google_analytics_counter_queue_reset_statistics() {
-  foreach (array('google_analytics_counter_queue_statistics', 'google_analytics_counter_queue_statistics_path') as $table) {
-    db_truncate($table)->execute();
-  }
-}
-
-/**
- * @param null $item_id
- * @return mixed
+ * Drush callback for processing a single queue item, specified by its id.
+ *
+ * @param int $item_id
+ *   The queue item identifier to process.
  */
 function drush_google_analytics_counter_queue_item_run($item_id = NULL) {
   $queue_item = google_analytics_counter_queue_queue_item_load($item_id);
@@ -116,4 +117,3 @@ function drush_google_analytics_counter_queue_item_run($item_id = NULL) {
     $queue_item->delete();
   }
 }
-

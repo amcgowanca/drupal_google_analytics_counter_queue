@@ -17,7 +17,8 @@ function hook_google_analytics_counter_queue_api() {
 /**
  * Enables modules to alter the xoauth_display_name property of HTTP requests.
  *
- * @param string $display_name
+ * @param string $display_name.
+ *
  *   The display name to change.
  */
 function hook_google_analytics_counter_queue_xoauth_display_name_alter(&$display_name) {
