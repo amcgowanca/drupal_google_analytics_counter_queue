@@ -289,6 +289,11 @@ function google_analytics_counter_queue_execute_queues_on_cron() {
 function google_analytics_counter_queue_process_queue($queue_item) {
   // TODO: Document and clean up code.
   $queue_items = is_array($queue_item) ? $queue_item : array($queue_item);
+
+  if (empty($queue_items)) {
+    return FALSE;
+  }
+
   // Retrieve the API client instance.
   $client = google_analytics_counter_queue_api_client();
 

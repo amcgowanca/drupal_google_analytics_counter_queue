@@ -450,6 +450,14 @@ function google_analytics_counter_queue_admin_authentication_form_submit($form, 
   }
 }
 
+/**
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ * @param $statistics
+ * @return mixed
+ */
 function google_analytics_counter_queue_admin_statistics_delete_multiple_confirm($form, &$form_state, $statistics) {
   $form['statistics'] = array(
     '#tree' => TRUE,
@@ -476,6 +484,12 @@ function google_analytics_counter_queue_admin_statistics_delete_multiple_confirm
   return confirm_form($form, $confirm_question, 'admin/config/system/google-analytics-counter-queue/statistics', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
 }
 
+/**
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ */
 function google_analytics_counter_queue_admin_statistics_delete_multiple_confirm_submit($form, &$form_state) {
   if ($form_state['values']['confirm']) {
     foreach ($form_state['values']['statistics'] as $statistic_id) {
@@ -487,6 +501,17 @@ function google_analytics_counter_queue_admin_statistics_delete_multiple_confirm
   }
 }
 
+/**
+ *
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ *
+ * @return array
+ *   The statistics overview table form.
+ */
 function google_analytics_counter_queue_admin_statistics($form, &$form_state) {
   if (isset($form_state['values']['op']) && in_array($form_state['values']['op'], array(t('Update'), t('Delete'))) && isset($form_state['values']['operation']) && 'delete' == $form_state['values']['operation'] && !empty($form_state['values']['statistics'])) {
     return google_analytics_counter_queue_admin_statistics_delete_multiple_confirm($form, $form_state, array_filter($form_state['values']['statistics']));
@@ -583,6 +608,14 @@ function google_analytics_counter_queue_admin_statistics($form, &$form_state) {
   return $form;
 }
 
+/**
+ * Submit handler for the statistics overview that forces rebuild.
+ *
+ * @param array $form
+ *   An array of form elements and properties.
+ * @param array $form_state
+ *   An array representing the current form's state.
+ */
 function google_analytics_counter_queue_admin_statistics_submit($form, &$form_state) {
   $form_state['rebuild'] = TRUE;
 }

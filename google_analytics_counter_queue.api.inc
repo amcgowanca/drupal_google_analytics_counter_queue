@@ -5,7 +5,13 @@
  */
 
 /**
+ * Registers Google Analytics Counter Queue API information.
+ *
  * @return array
+ *   Returns an array containing the following keys:
+ *     * api (required): The version of API the module implements.
+ *     * path (optional): If includes are stored somewhere other than within the
+ *       root module directory, specify its path here.
  */
 function hook_google_analytics_counter_queue_api() {
   return array(
@@ -18,7 +24,6 @@ function hook_google_analytics_counter_queue_api() {
  * Enables modules to alter the xoauth_display_name property of HTTP requests.
  *
  * @param string $display_name.
- *
  *   The display name to change.
  */
 function hook_google_analytics_counter_queue_xoauth_display_name_alter(&$display_name) {
@@ -26,13 +31,15 @@ function hook_google_analytics_counter_queue_xoauth_display_name_alter(&$display
 }
 
 /**
- *
+ * Notifies modules after the API access token has been revoked.
  */
 function hook_google_analytics_counter_queue_api_revoked() {
   drupal_set_message(t('Google Analytics API token has been revoked for Google Analytics Counter Queue.'), 'status');
 }
 
 /**
+ * The Queue Item has been successfully created and inserted into the database.
+ *
  * @param GoogleAnalyticsCounterQueueQueueItem $queue_item
  *   The queue item which was created.
  */
@@ -44,6 +51,8 @@ function hook_google_analytics_counter_queue_queue_item_insert(GoogleAnalyticsCo
 }
 
 /**
+ * The Queue Item has been successfully updated.
+ *
  * @param GoogleAnalyticsCounterQueueQueueItem $queue_item
  *   The updated queue item.
  */
@@ -52,6 +61,8 @@ function hook_google_analytics_counter_queue_queue_item_update(GoogleAnalyticsCo
 }
 
 /**
+ * The Queue Item has been deleted.
+ *
  * @param GoogleAnalyticsCounterQueueQueueItem $queue_item
  *   The deleted queue item.
  */
@@ -60,6 +71,8 @@ function hook_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCo
 }
 
 /**
+ * The Queue Item has been successfully processed.
+ *
  * @param GoogleAnalyticsCounterQueueQueueItem $queue_item
  *   The processed queue item.
  * @param mixed $statistics
@@ -72,8 +85,12 @@ function hook_google_analytics_counter_queue_queue_item_processed(GoogleAnalytic
 }
 
 /**
+ * Allows other modules to alter the statistical overview information.
+ *
  * @param array $statistics_info
+ *   The statistic information.
  * @param array $statistics_info_header
+ *   The statistic table headers.
  */
 function hook_google_analytics_counter_queue_statistic_overview_info_alter(array &$statistics_info, array &$statistics_info_header) {
   // TODO: Add a basic example.
