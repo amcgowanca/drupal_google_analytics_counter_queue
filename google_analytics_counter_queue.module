@@ -24,6 +24,9 @@ define('GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_POST', 'POST');
  */
 define('GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_GET', 'GET');
 
+// Always include the statistics specific code.
+require_once 'google_analytics_counter_queue.statistics.inc';
+
 /**
  * Implements hook_menu().
  */
@@ -256,7 +259,7 @@ function google_analytics_counter_queue_google_analytics_counter_queue_api() {
  *   Any variables related to the message for translation.
  */
 function google_analytics_counter_queue_log($severity, $message, $variables = array()) {
-  watchdog(GOOGLE_ANALYTICS_COUNTER_QUEUE_LOG, $message, $variables, $severity);
+  watchdog(GOOGLE_ANALYTICS_COUNTER_QUEUE_WATCHDOG_TYPE, $message, $variables, $severity);
 }
 
 /**

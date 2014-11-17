@@ -62,7 +62,7 @@ function google_analytics_counter_queue_statistic_load($statistic_id, $reset = F
         $row->items[$item->id] = $item;
       }
       $static_fast_cache['ids'][$row->statistic_id] = $row->path;
-      $static_fast_cache['path'][$row->path] = $row;
+      $static_fast_cache['paths'][$row->path] = $row;
     }
     else {
       return FALSE;
