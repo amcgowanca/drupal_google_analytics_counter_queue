@@ -22,12 +22,12 @@ function google_analytics_counter_queue_install() {
   variable_set('google_analytics_counter_queue_google_analytics_data_query_start_date', '2005-01-01');
   variable_set('google_analytics_counter_queue_queue_process_multiple', 1);
   variable_set('google_analytics_counter_queue_api_http_request_timeout', 30);
+  variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
   // Drupal's queue API requires that any custom implemented queue classes are
   // defined as variables, allowing the queue class to be retrieved dynamically
   // using the variable `queue_class_{queue_name}`. This is primarily used
   // with the DrupalQueue::get() method.
   variable_set('queue_class_google_analytics_counter_queue', 'GoogleAnalyticsCounterQueueQueue');
-  variable_set('queue_class_google_analytics_counter_priority_queue', 'GoogleAnalyticsCounterQueuePriorityQueue');
   // During installation, we will ensure that the statistics module, if enabled,
   // has its content view increment turned off.
   if (module_enabled('statistics')) {
@@ -53,9 +53,9 @@ function google_analytics_counter_queue_uninstall() {
   variable_del('google_analytics_counter_queue_google_analytics_data_query_start_date');
   variable_del('google_analytics_counter_queue_queue_process_multiple');
   variable_del('google_analytics_counter_queue_api_http_request_timeout');
+  variable_del('google_analytics_counter_queue_chunk_process_start_index', 0);
   // Delete Drupal core's queue related variables to perform complete cleanup.
   variable_del('queue_class_google_analytics_counter_queue');
-  variable_del('queue_class_google_analytics_counter_priority_queue');
 }
 
 /**
@@ -63,10 +63,7 @@ function google_analytics_counter_queue_uninstall() {
  */
 function google_analytics_counter_queue_schema() {
   $schema = array();
-  // Because both the general and priority queues have identical storage tables,
-  // we will simply create the database table schema once and assign to the
-  // $schema variable with correct table names.
-  $queue_table_schema = array(
+  $schema['google_analytics_counter_queue_queue'] = array(
     'description' => 'Stores queue items and their data for processing.',
     'fields' => array(
       'item_id' => array(
@@ -125,10 +122,8 @@ function google_analytics_counter_queue_schema() {
         'description' => 'Queue item weight, used to determine the order of processing.',
       ),
     ),
-    'primary key' => array('item_id'),
+    'primary key' => array('item_id')
   );
-  $schema['google_analytics_counter_queue_queue'] = $queue_table_schema;
-  $schema['google_analytics_counter_queue_priority_queue'] = $queue_table_schema;
   $schema['google_analytics_counter_queue_statistics'] = array(
     'description' => 'Access statistic sums for paths.',
     'fields' => array(
@@ -266,4 +261,19 @@ function google_analytics_counter_queue_requirements($phase) {
     }
   }
   return $requirements;
+}
+
+/**
+ *
+ */
+function google_analytics_counter_queue_update_7001() {
+  variable_del('queue_class_google_analytics_counter_queue');
+  variable_del('queue_class_google_analytics_counter_priority_queue');
+  variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
+  // Drop the previously implemented general queue.
+  db_drop_table('google_analytics_counter_queue_queue');
+  db_drop_table('google_analytics_counter_queue_priority_queue');
+  // Create the new single queue table to be used.
+  $schema = google_analytics_counter_queue_schema();
+  db_create_table('google_analytics_counter_queue_queue', $schema['google_analytics_counter_queue']);
 }

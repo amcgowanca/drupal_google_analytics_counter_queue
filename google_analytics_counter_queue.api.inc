@@ -71,17 +71,11 @@ function hook_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsCo
 }
 
 /**
- * The Queue Item has been successfully processed.
- *
- * @param GoogleAnalyticsCounterQueueQueueItem $queue_item
- *   The processed queue item.
- * @param mixed $statistics
- *   The statistics object containing information about the queue item's path.
- *   If the parameter value is NULL, the queue item has still be processed,
- *   however, no statistical information was collected as it did not exist.
+ * @param $statistics
+ * @param $source_path
  */
-function hook_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics = NULL) {
-  google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Queue item @id has been processed.', array('@id' => $queue_item->getIdentifier()));
+function hook_google_analytics_counter_queue_statistics_processed($statistics, $source_path) {
+  google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'The statistics for the source path @path have been processed.', array('@path' => $source_path));
 }
 
 /**

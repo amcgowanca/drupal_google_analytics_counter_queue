@@ -33,6 +33,12 @@ function google_analytics_counter_queue_drush_command() {
   $commands['google-analytics-counter-queue-reset-statistics'] = array(
     'description' => 'Truncates the statistics database tables.',
   );
+  $commands['google-analytics-counter-queue-process-chunks'] = array(
+    'description' => 'Process a chunk of received data from Google Analytics API.',
+    'options' => array(
+      'chunks' => 'The number of chunks to process. Maximum is 10, default 1.',
+    ),
+  );
   return $commands;
 }
 
@@ -128,5 +134,20 @@ function drush_google_analytics_counter_queue_item_run($item_id = NULL) {
     }
     while ($queue_item->getRemainingRecords());
     $queue_item->delete();
+  }
+}
+
+function drush_google_analytics_counter_queue_process_chunks() {
+  $count = (int) drush_get_option('chunks', 1);
+  // $count = 10 <= $count ? 10 : $count;
+  $count = 0 >= $count ? 1 : $count;
+
+  drush_print(dt('Processing @number of chunks.', array('@number' => $count)));
+
+  for ($i = 0; $i < $count; $i++) {
+    drush_print(dt('Processing chunk @i of @n', array('@i' => $i, '@n' => $count)));
+    google_analytics_counter_queue_process_chunks();
+
+    sleep(5);
   }
 }

@@ -35,19 +35,6 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
   }
 
   /**
-   * A boolean indicating whether this queue is a priority queue.
-   *
-   * @access public
-   *
-   * @return bool
-   *   Returns TRUE if this queue is a priority based on `weight` property,
-   *   otherwise returns FALSE.
-   */
-  public function isPriority() {
-    return FALSE;
-  }
-
-  /**
    * Returns the name of the database table containing the queue items.
    *
    * @access public
@@ -94,8 +81,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    * @return
    *   An integer estimate of the number of items in the queue.
    */
-  public function numberOfItems()
-  {
+  public function numberOfItems() {
     return (int) db_select($this->getTable(), 'q')->fields('q', array('item_id'))->execute()->rowCount();
   }
 

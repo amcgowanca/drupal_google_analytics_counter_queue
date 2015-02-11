@@ -192,16 +192,18 @@ function google_analytics_counter_queue_element_info() {
 }
 
 /**
+ * Implements hook_cron().
+ */
+function google_analytics_counter_queue_cron() {
+  // TODO: Implement with switch for setting.
+}
+
+/**
  * Implements hook_cron_queue_info().
  */
 function google_analytics_counter_queue_cron_queue_info() {
   $queues = array();
   $skip_on_cron = !((bool) google_analytics_counter_queue_execute_queues_on_cron());
-  $queues['google_analytics_counter_queue'] = array(
-    'worker callback' => 'google_analytics_counter_queue_process_queue',
-    'time' => 30,
-    'skip on cron' => $skip_on_cron,
-  );
   $queues['google_analytics_counter_priority_queue'] = array(
     'worker callback' => 'google_analytics_counter_queue_process_queue',
     'time' => 120,
@@ -320,6 +322,8 @@ function google_analytics_counter_queue_process_queue($queue_item) {
     );
   }
 
+  $aggregate_info = array();
+
   do {
     if ($total_records && $remaining_records) {
       $diff_records_count = $total_records - $remaining_records;
@@ -360,38 +364,7 @@ function google_analytics_counter_queue_process_queue($queue_item) {
       }
 
       if (!empty($response['data']['rows'])) {
-        foreach ($response['data']['rows'] as $row) {
-          $ga_pagepath = trim(array_shift($row), '/');
-          $ga_pageviews = array_shift($row);
-
-          $ga_pagepath_info = parse_url($ga_pagepath);
-          if (!empty($ga_pagepath_info['path'])) {
-            $ga_pagepath_info['path'] = strtolower($ga_pagepath_info['path']);
-            if (isset($pathview_info[$ga_pagepath_info['path']]) && FALSE === $pathview_info[$ga_pagepath_info['path']]) {
-              continue;
-            }
-
-            if (google_analytics_counter_queue_valid_path($ga_pagepath_info['path'])) {
-              $drupal_path = drupal_get_normal_path($ga_pagepath_info['path']);
-              if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($drupal_path)) {
-                continue;
-              }
-
-              $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
-              if (!empty($ignored_paths) && drupal_match_path($ga_pagepath_info['path'], $ignored_paths)) {
-                continue;
-              }
-
-              if (!isset($pathview_info[$drupal_path])) {
-                $pathview_info[$drupal_path] = array(
-                  $ga_pagepath_info['path'] => 0,
-                );
-              }
-
-              $pathview_info[$drupal_path][$ga_pagepath_info['path']] += $ga_pageviews;
-            }
-          }
-        }
+        _google_analytics_counter_queue_api_request_data_process_aggregate($response['data']['rows'], $aggregate_info);
       }
       else {
         $error = TRUE;
@@ -404,126 +377,203 @@ function google_analytics_counter_queue_process_queue($queue_item) {
   while (!$error && ($remaining_records > 0 || NULL === $remaining_records));
 
   if (!$error && !empty($pathview_info)) {
-    _google_analytics_counter_queue_process_queue_process_statistics($queue_items, $pathview_info);
-  }
-}
-
-/**
- * Processes the path view information and updates all required statistics.
- *
- * @param array $queue_items
- *   An array of queue items processed.
- * @param array $pathview_info
- *   An array of path view information containing the page view data used to
- *   update the total count for a particular queue item's path statistics.
- */
-function _google_analytics_counter_queue_process_queue_process_statistics(array &$queue_items, array &$pathview_info) {
-  // TODO: Document and clean up code.
-  module_load_include('inc', 'google_analytics_counter_queue', 'google_analytics_counter_queue.statistics');
-  foreach ($queue_items as $k => &$queue_item) {
-    $queue_item_normal_path = drupal_get_normal_path($queue_item->getPath());
-    if (isset($pathview_info[$queue_item_normal_path])) {
-      $statistics = google_analytics_counter_queue_statistics_path($queue_item_normal_path);
-      if (!$statistics) {
-        $statistics = google_analytics_counter_queue_statistics_create($queue_item_normal_path, 0, time());
-        if (FALSE === $statistics) {
-          google_analytics_counter_queue_log(WATCHDOG_NOTICE, 'Unable to load or generate statistics information for queue item @queue_item.', array(
-            '@queue_item' => $queue_item->getIdentifier(),
-          ));
-          continue;
-        }
+    foreach ($queue_items as $k => &$queue_item) {
+      $source_path = drupal_get_normal_path($queue_item->getPath());
+      if (isset($aggregate_info[$source_path])) {
+        $statistics = _google_analytics_counter_queue_process_statistics($source_path, $aggregate_info[$source_path]);
+        // Set processed state to TRUE, allowing for the queue item deletion.
+        $queue_item->setProcessedState(TRUE);
+        // Load all modules which make use of the API definition.
+        google_analytics_counter_queue_module_include();
+        // This module hook invocation is potentially problematic because of
+        // the potential to have large number of source paths to process. Should
+        // the implementer perform extensive operations, this could result in
+        // degradation of performance.
+        module_invoke_all('google_analytics_counter_queue_statistics_processed', $statistics, $source_path);
       }
-
-      foreach ($pathview_info[$queue_item_normal_path] as $path => $view_count) {
-        if (FALSE === $view_count) {
-          continue;
-        }
-
-        if (isset($statistics->items[$path])) {
-          db_update('google_analytics_counter_queue_statistics_path')
-            ->fields(array(
-              'updated' => time(),
-              'count' => $view_count,
-            ))
-            ->condition('id', $statistics->items[$path]->id)
-            ->execute();
-          $statistics->items[$path]->count = $view_count;
-        }
-        else {
-          $fields = array(
-            'created' => time(),
-            'updated' => time(),
-            'path' => $path,
-            'count' => $view_count,
-            'statistic_id' => $statistics->statistic_id,
-          );
-
-          $id = db_insert('google_analytics_counter_queue_statistics_path')
-            ->fields($fields)
-            ->execute();
-          $fields['id'] = $id;
-          $statistics->items[$path] = (object) $fields;
-        }
-      }
-
-      // We perform a query to retrieve the sum as it calculating at runtime
-      // with the above processing might not always be successful due to
-      // additional path specific statistic information existing that was not
-      // processed above.
-      $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
-        ->condition('p.statistic_id', $statistics->statistic_id);
-      $query->addExpression('SUM(p.count)', 'sum');
-      $sum = $query->execute()
-        ->fetchObject();
-      // Assuming the sum calculation was successful and the current total
-      // number of views is not the same, we will update the aggregated
-      // total number of views.
-      if (FALSE !== $sum && $sum->sum != $statistics->totalcount) {
-        $timestamp = time();
-        db_update('google_analytics_counter_queue_statistics')
-          ->fields(array(
-            'totalcount' => $sum->sum,
-            'updated' => $timestamp,
-          ))
-          ->condition('statistic_id', $statistics->statistic_id)
-          ->execute();
-        // Update the static cache of the statistical information objects.
-        $statistics->updated = $timestamp;
-        $statistics->totalcount = $sum->sum;
-        $statistic_info = &drupal_static('google_analytics_counter_queue_statistics_path', array());
-        $statistic_info[$statistics->path] = $statistics;
-      }
-      // Set processed state to TRUE, allowing for the queue item deletion.
-      $queue_item->setProcessedState(TRUE);
-      // Load all modules which make use of the API definition.
-      google_analytics_counter_queue_module_include();
-      // This module hook invocation is potentially problematic because of
-      // the potential to have large number of queue items to process. Should
-      // the implementer perform extensive operations, this could result in
-      // degradation of performance.
-      module_invoke_all('google_analytics_counter_queue_queue_item_processed', $queue_item, $statistics);
     }
   }
 }
 
 /**
- * Retrieves the general queue instance.
  *
- * @return GoogleAnalyticsCounterQueueQueue
- *   The general queue instance.
  */
-function google_analytics_counter_queue_queue() {
-  return DrupalQueue::get('google_analytics_counter_queue');
+function google_analytics_counter_queue_process_chunks() {
+  $client = google_analytics_counter_queue_api_client();
+  $profile_id = google_analytics_counter_queue_api_profile_id();
+  $start_index = (int) variable_get('google_analytics_counter_queue_chunk_process_start_index', 0);
+  if ($response = google_analytics_counter_queue_api_request_data($client, $profile_id, array('ga:pagePath'), array('ga:pageviews'), NULL, NULL, NULL, $start_index, NULL)) {
+    // TODO: If zero results are returned, reset the start index.
+    $aggregate_info = array();
+    if (!empty($response['data']['rows'])) {
+      _google_analytics_counter_queue_api_request_data_process_aggregate($response['data']['rows'], $aggregate_info);
+    }
+    // If actual data is returned and the aggregate information is populated,
+    // process the statistics for each source path.
+    if (!empty($aggregate_info)) {
+      foreach ($aggregate_info as $source_path => &$view_info) {
+        $statistics = _google_analytics_counter_queue_process_statistics($source_path, $view_info);
+        // Load all modules which make use of the API definition.
+        google_analytics_counter_queue_module_include();
+        // This module hook invocation is potentially problematic because of
+        // the potential to have large number of source paths to process. Should
+        // the implementer perform extensive operations, this could result in
+        // degradation of performance.
+        module_invoke_all('google_analytics_counter_queue_statistics_processed', $statistics, $source_path);
+      }
+    }
+    variable_set('google_analytics_counter_queue_chunk_process_start_index', $start_index + count($response['data']['rows']));
+  }
 }
 
 /**
- * Retrieves the priority queue instance.
- *
- * @return GoogleAnalyticsCounterQueuePriorityQueue
- *   The priority queue instance.
+ * @param array $data
+ * @param array $aggregate
  */
-function google_analytics_counter_queue_priority_queue() {
-  return DrupalQueue::get('google_analytics_counter_priority_queue');
+function _google_analytics_counter_queue_api_request_data_process_aggregate(array &$data, array &$aggregate) {
+  foreach ($data as $row) {
+    list($path, $view_count) = $row;
+    $pathinfo = parse_url($path);
+    if (!empty($pathinfo['path'])) {
+      $pathinfo['path'] = strtolower($pathinfo['path']);
+      if (isset($aggregate[$pathinfo['path']]) && FALSE === $aggregate[$pathinfo['path']]) {
+        continue;
+      }
+      // Only if the parsed path information has a valid path will we actually
+      // process and append to the aggregate data set.
+      if (google_analytics_counter_queue_valid_path($pathinfo['path'])) {
+        $source_path = drupal_get_normal_path($pathinfo['path']);
+        // Check and verify that we are or are not processing administrative
+        // paths. If we are not, skip this path from populating the aggregate if
+        // it is a valid admin path.
+        if (!google_analytics_counter_queue_queue_process_admin_paths() && path_is_admin($source_path)) {
+          continue;
+        }
+        // Skip any ignored paths should this path match one of the ignored path
+        // patterns that has been configured.
+        $ignored_paths = google_analytics_counter_queue_queue_ignored_paths();
+        if (!empty($ignored_paths) && drupal_match_path($pathinfo['path'], $ignored_paths)) {
+          continue;
+        }
+        // Initialize the aggregate information should the source path does not
+        // exist yet within the aggregate array.
+        if (!isset($aggregate[$source_path])) {
+          $aggregate[$source_path] = array();
+        }
+        if (!isset($aggregate[$source_path][$pathinfo['path']])) {
+          $aggregate[$source_path][$pathinfo['path']] = 0;
+        }
+        $aggregate[$source_path][$pathinfo['path']] += $view_count;
+      }
+    }
+  }
+}
+
+/**
+ * Processes the aggregate view count data for the specified source path.
+ *
+ * @param string $source_path
+ *   The source path of the aggregate data.
+ * @param array $view_info
+ *   An array of alias paths and the path's view count.
+ *
+ * @returns mixed
+ *   Returns the statistical object if the aggregate view information has been
+ *   successfully processed. Otherwise will return FALSE on error.
+ */
+function _google_analytics_counter_queue_process_statistics($source_path, array &$view_info) {
+  // If the specified aggregate view information for the $source_path is empty,
+  // exit early as there is nothing for us to do.
+  if (empty($view_info)) {
+    return FALSE;
+  }
+  // Retrieve the existing statistical information for the source path. If it
+  // does not exist, attempt to initialize and create a new statistical record.
+  module_load_include('inc', 'google_analytics_counter_queue', 'google_analytics_counter_queue.statistics');
+  $statistics = google_analytics_counter_queue_statistics_path($source_path);
+  if (!$statistics) {
+    $statistics = google_analytics_counter_queue_statistics_create($source_path, 0, time());
+    if (FALSE === $statistics) {
+      google_analytics_counter_queue_log(WATCHDOG_NOTICE, 'Unable to load or generate statistics information for path: @path.', array(
+        '@path' => $source_path,
+      ));
+      return FALSE;
+    }
+  }
+  // Process the view count information for each of the aliased paths that
+  // relate to the source path.
+  foreach ($view_info as $path => $view_count) {
+    // If the view count is FALSE, skip, then move on.
+    if (FALSE === $view_count) {
+      continue;
+    }
+    // We use the time() function below instead of REQUEST_TIME due to the
+    // fact that this function is generally called within a long running
+    // process and time() is more accurate in this case.
+    if (isset($statistics->items[$path])) {
+      db_update('google_analytics_counter_queue_statistics_path')
+        ->fields(array(
+          'updated' => time(),
+          'count' => $view_count,
+        ))
+        ->condition('id', $statistics->items[$path]->id)
+        ->execute();
+      $statistics->items[$path]->count = $view_count;
+    }
+    else {
+      $fields = array(
+        'created' => time(),
+        'updated' => time(),
+        'path' => $path,
+        'count' => $view_count,
+        'statistic_id' => $statistics->statistic_id,
+      );
+
+      $id = db_insert('google_analytics_counter_queue_statistics_path')
+        ->fields($fields)
+        ->execute();
+      $fields['id'] = $id;
+      $statistics->items[$path] = (object)$fields;
+    }
+  }
+  // We perform a query to retrieve the sum as it calculating at runtime
+  // with the above processing might not always be successful due to
+  // additional path specific statistic information existing that was not
+  // processed above.
+  $query = db_select('google_analytics_counter_queue_statistics_path', 'p')
+    ->condition('p.statistic_id', $statistics->statistic_id);
+  $query->addExpression('SUM(p.count)', 'sum');
+  $sum = $query->execute()
+    ->fetchObject();
+  // Assuming the sum calculation was successful and the current total
+  // number of views is not the same, we will update the aggregated
+  // total number of views.
+  if (FALSE !== $sum && $sum->sum != $statistics->totalcount) {
+    $timestamp = time();
+    db_update('google_analytics_counter_queue_statistics')
+      ->fields(array(
+        'totalcount' => $sum->sum,
+        'updated' => $timestamp,
+      ))
+      ->condition('statistic_id', $statistics->statistic_id)
+      ->execute();
+    // Update the static cache of the statistical information objects.
+    $statistics->updated = $timestamp;
+    $statistics->totalcount = $sum->sum;
+    $statistic_info = &drupal_static('google_analytics_counter_queue_statistics_path', array());
+    $statistic_info[$statistics->path] = $statistics;
+  }
+  return $statistics;
+}
+
+/**
+ * Retrieves the Google Analytics Counter Queue queue instance.
+ *
+ * @return GoogleAnalyticsCounterQueueQueue
+ *   The queue instance.
+ */
+function google_analytics_counter_queue_queue() {
+  return DrupalQueue::get('google_analytics_counter_queue');
 }
 
 /**
@@ -1668,12 +1718,15 @@ function _google_analytics_counter_queue_api_request_parameters_compile(array $p
         }
       }
 
-      $compiled[$param_name] = implode(',', $compiled[$param_name]);
+      if (!empty($compiled[$param_name])) {
+        $compiled[$param_name] = implode(',', $compiled[$param_name]);
+      }
     }
     else {
       $compiled[$param_name] = $param_value;
     }
   }
+  $compiled = array_filter($compiled);
   return $compiled;
 }
 

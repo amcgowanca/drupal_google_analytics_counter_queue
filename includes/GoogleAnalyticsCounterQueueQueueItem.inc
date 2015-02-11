@@ -45,21 +45,13 @@ class GoogleAnalyticsCounterQueueQueueItem {
     if ($item_id) {
       $conditions['item_id'] = $item_id;
     }
-
-    $query = self::loadQueryBuild(google_analytics_counter_queue_priority_queue(), $conditions);
+    $query = self::loadQueryBuild(google_analytics_counter_queue_queue(), $conditions);
     $query = $query->execute();
     if ($record = $query->fetchObject()) {
-      $instance = self::factory($record, google_analytics_counter_queue_priority_queue());
+      $instance = self::factory($record, google_analytics_counter_queue_queue());
     }
     else {
-      $query = self::loadQueryBuild(google_analytics_counter_queue_queue(), $conditions);
-      $query = $query->execute();
-      if ($record = $query->fetchObject()) {
-        $instance = self::factory($record, google_analytics_counter_queue_queue());
-      }
-      else {
-        return FALSE;
-      }
+      $instance = FALSE;
     }
     return $instance;
   }
@@ -289,7 +281,7 @@ class GoogleAnalyticsCounterQueueQueueItem {
   public function setRemainingRecords($value) {
     $this->remaining_records = 0 > $value ? 0 : $value;
     $this->changed = TRUE;
-    return $this;
+    return $this;g
   }
 
   public function getRemainingRecords() {
