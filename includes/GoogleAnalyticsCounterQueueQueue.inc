@@ -1,13 +1,13 @@
 <?php
 /**
  * @file
- * Contains GoogleAnalyticsCounterQueueQueue.
+ * Contains class GoogleAnalyticsCounterQueueQueue.
  */
 
 /**
  * Class GoogleAnalyticsCounterQueueQueue.
  */
-class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, Iterator, Countable {
+class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, Countable {
   /**
    * The name of this queue; required by Drupal API.
    *
@@ -32,18 +32,6 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    */
   public function getName() {
     return $this->name;
-  }
-
-  /**
-   * Returns the name of the database table containing the queue items.
-   *
-   * @access public
-   *
-   * @return string
-   *   Returns the database table name.
-   */
-  public function getTable() {
-    return 'google_analytics_counter_queue_queue';
   }
 
   /**
@@ -82,7 +70,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    *   An integer estimate of the number of items in the queue.
    */
   public function numberOfItems() {
-    return (int) db_select($this->getTable(), 'q')->fields('q', array('item_id'))->execute()->rowCount();
+    return (int) db_select('google_analytics_counter_queue_queue', 'q')->fields('q', array('item_id'))->execute()->rowCount();
   }
 
   /**
@@ -113,8 +101,8 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
         ->execute()
         ->fetchObject();
       if ($item) {
-        $queue_item = GoogleAnalyticsCounterQueueQueueItem::factory($item, $this);
-        $update = db_update($this->getTable())->fields(array(
+        $queue_item = GoogleAnalyticsCounterQueueQueueItem::factory($item);
+        $update = db_update('google_analytics_counter_queue_queue')->fields(array(
           'expire' => time() + $lease_time,
         ))->condition('item_id', $queue_item->getIdentifier())
           ->condition('expire', 0);
@@ -147,7 +135,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
       throw new InvalidArgumentException(t('Argument must be of type GoogleAnalyticsCounterQueueQueueItem.'));
     }
 
-    if (!$force_delete && (!$item->getProcessedState() && $item->getAttempts() < google_analytics_counter_queue_google_analytics_queue_item_threshold())) {
+    /* if (!$force_delete && (!$item->getProcessedState() && $item->getAttempts() < google_analytics_counter_queue_google_analytics_queue_item_threshold())) {
       google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Attempt to delete queue item @queue; attempts to process is less than threshold.', array(
         '@queue' => $item->getIdentifier(),
       ));
@@ -159,32 +147,12 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
       google_analytics_counter_queue_log(WATCHDOG_DEBUG, 'Attempt to delete a queue item which has records remaining; saving records instead.');
       $item->save();
       return;
-    }
+    } */
 
     if ($item_id = $item->getIdentifier()) {
-      if (!empty($this->items) && isset($this->item_keys[$item_id])) {
-        if (isset($this->items[$this->item_keys[$item_id]])) {
-          unset($this->items[$this->item_keys[$item_id]]);
-        }
-        unset($this->item_keys[$item_id]);
-      }
-
-      if ($this->isPriority()) {
-        db_delete($this->getTable())
-          ->condition('item_id', $item_id)
-          ->execute();
-      }
-      else {
-        $weight = google_analytics_counter_queue_queue_item_next_weight('bottom', $this);
-        $item->setWeight($weight)
-          ->setExpires(0)
-          ->setAttempts(0)
-          ->getProcessedState(FALSE);
-        $item->save();
-
-        $this->item_keys[$item_id] = count($this->items);
-        $this->items[$this->item_keys[$item_id]] = $item;
-      }
+      db_delete('google_analytics_counter_queue_queue')
+        ->condition('item_id', $item_id)
+        ->execute();
     }
 
     google_analytics_counter_queue_module_include();
@@ -210,7 +178,6 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
     if (!$item instanceof GoogleAnalyticsCounterQueueQueueItem) {
       throw new InvalidArgumentException(t('Argument must be of type GoogleAnalyticsCounterQueueQueueItem.'));
     }
-
     $item->setExpires(0)->save();
     return TRUE;
   }
@@ -239,96 +206,11 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
   public function deleteQueue() {
     // Delete all items from within the queue; however, we will not delete the
     // queue table itself as we will need it again.
-    db_delete($this->getTable())->execute();
-  }
-
-  protected $items = NULL;
-  protected $item_keys = NULL;
-  protected $position = 0;
-
-  protected function initializeIterator() {
-    if (NULL === $this->items) {
-    $this->items = array();
-    $this->item_keys = array();
-    $this->position = 0;
-
-      // TODO: This query needs to be optimized.
-      $query = db_select($this->getTable(), 'q')
-        ->fields('q')
-        ->orderBy('q.weight')
-        ->orderBy('q.item_id')
-        ->execute();
-      while ($row = $query->fetchObject()) {
-        /* if (!empty($row->data) && is_string($row->data)) {
-          $row->data = @unserialize($row->data);
-        } */
-
-        $item = GoogleAnalyticsCounterQueueQueueItem::factory($row, $this);
-        $this->items[$item->getIdentifier()] = $item;
-        $this->item_keys[] = $item->getIdentifier();
-      }
-    }
+    db_delete('google_analytics_counter_queue_queue')->execute();
   }
 
   /**
-   * (PHP 5 &gt;= 5.0.0)<br/>
-   * Return the current element
-   * @link http://php.net/manual/en/iterator.current.php
-   * @return mixed Can return any type.
-   */
-  public function current() {
-    $this->initializeIterator();
-    return $this->items[$this->item_keys[$this->position]];
-  }
-
-  /**
-   * (PHP 5 &gt;= 5.0.0)<br/>
-   * Move forward to next element
-   * @link http://php.net/manual/en/iterator.next.php
-   * @return void Any returned value is ignored.
-   */
-  public function next() {
-    $this->initializeIterator();
-    $this->position++;
-  }
-
-  /**
-   * (PHP 5 &gt;= 5.0.0)<br/>
-   * Return the key of the current element
-   * @link http://php.net/manual/en/iterator.key.php
-   * @return mixed scalar on success, or null on failure.
-   */
-  public function key() {
-    $this->initializeIterator();
-    return $this->item_keys[$this->position];
-  }
-
-  /**
-   * (PHP 5 &gt;= 5.0.0)<br/>
-   * Checks if current position is valid
-   * @link http://php.net/manual/en/iterator.valid.php
-   * @return boolean The return value will be casted to boolean and then evaluated.
-   * Returns true on success or false on failure.
-   */
-  public function valid() {
-    $this->initializeIterator();
-    return isset($this->item_keys[$this->position]) && isset($this->items[$this->item_keys[$this->position]]);
-  }
-
-  /**
-   * (PHP 5 &gt;= 5.0.0)<br/>
-   * Rewind the Iterator to the first element
-   * @link http://php.net/manual/en/iterator.rewind.php
-   * @return void Any returned value is ignored.
-   */
-  public function rewind() {
-    $this->initializeIterator();
-    $this->position = 0;
-  }
-
-  /**
-   *
-   * @link http://php.net/manual/en/countable.count.php
+   * {@inheritdoc}
    */
   public function count() {
     return $this->numberOfItems();

@@ -122,7 +122,14 @@ function google_analytics_counter_queue_schema() {
         'description' => 'Queue item weight, used to determine the order of processing.',
       ),
     ),
-    'primary key' => array('item_id')
+    'primary key' => array('item_id'),
+    'unique keys' => array(
+      'path' => array('path'),
+    ),
+    'indexes' => array(
+      'expire' => array('expire'),
+      'weight' => array('weight'),
+    ),
   );
   $schema['google_analytics_counter_queue_statistics'] = array(
     'description' => 'Access statistic sums for paths.',
@@ -264,16 +271,19 @@ function google_analytics_counter_queue_requirements($phase) {
 }
 
 /**
- *
+ * Performs updates for bulk process capabilities and only one queue now.
  */
 function google_analytics_counter_queue_update_7001() {
+  // Remove old variables that are no longer needed and create new ones.
   variable_del('queue_class_google_analytics_counter_queue');
   variable_del('queue_class_google_analytics_counter_priority_queue');
+  variable_set('queue_class_google_analytics_counter_queue_queue', 'GoogleAnalyticsCounterQueueQueue');
   variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
+  variable_set('google_analytics_counter_queue_execute_chunk_processing_on_cron', TRUE);
   // Drop the previously implemented general queue.
   db_drop_table('google_analytics_counter_queue_queue');
   db_drop_table('google_analytics_counter_queue_priority_queue');
   // Create the new single queue table to be used.
   $schema = google_analytics_counter_queue_schema();
-  db_create_table('google_analytics_counter_queue_queue', $schema['google_analytics_counter_queue']);
+  db_create_table('google_analytics_counter_queue_queue', $schema['google_analytics_counter_queue_queue']);
 }

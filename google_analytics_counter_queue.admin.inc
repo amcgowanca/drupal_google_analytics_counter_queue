@@ -48,6 +48,16 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
     ),
     '#default_value' => google_analytics_counter_queue_update_statistics_node_counter(),
   );
+  $form['settings']['google_analytics_counter_queue_execute_chunk_processing_on_cron'] = array(
+    '#type' => 'radios',
+    '#title' => t('Process chunks on cron'),
+    '#description' => t('Used to determine whether or not chunks of data should be processed during the execution of cron jobs (<em>hook_cron()</em>) or not. For large sites, it is recommended that a separate process is created for processing chunks.'),
+    '#options' => array(
+      1 => t('Yes'),
+      0 => t('No'),
+    ),
+    '#default_value' => google_analytics_counter_queue_execute_chunk_processing_on_cron(),
+  );
   $form['settings']['google_analytics_counter_queue_execute_queues_on_cron'] = array(
     '#type' => 'radios',
     '#title' => t('Process queues on cron'),
@@ -101,7 +111,7 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
 }
 
 /**
- * Returns Google Analytics Counter Queue priority queue overview form.
+ * Returns Google Analytics Counter Queue queue overview form.
  *
  * @param array $form
  *   An array of form elements and properties.
@@ -111,10 +121,10 @@ function google_analytics_counter_queue_admin_settings_form($form, $form_state) 
  * @return array
  *   Returns a Drupal FAPI array to render.
  */
-function google_analytics_counter_queue_admin_priority_queue($form, &$form_state) {
+function google_analytics_counter_queue_admin_queue_manage_form($form, &$form_state) {
   if (isset($form_state['values']['op']) && in_array($form_state['values']['op'], array(t('Update'), t('Delete'))) &&
     isset($form_state['values']['operation']) && 'delete' == $form_state['values']['operation'] && !empty($form_state['values']['queue_items']['select'])) {
-    return google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm($form, $form_state, array_filter($form_state['values']['queue_items']['select']));
+    return google_analytics_counter_queue_admin_queue_delete_multiple_confirm($form, $form_state, array_filter($form_state['values']['queue_items']['select']));
   }
 
   $form['options'] = array(
@@ -137,61 +147,63 @@ function google_analytics_counter_queue_admin_priority_queue($form, &$form_state
   );
 
   $table_rows = array();
-  $queue = google_analytics_counter_queue_priority_queue();
-  if (0 < count($queue)) {
-    foreach ($queue as $item) {
-      $operation_href_prefix = 'admin/config/system/google-analytics-counter-queue/queue/item/' . $item->getIdentifier();
-      $operations = array(
-        'edit' => array(
-          'title' => t('edit'),
-          'href' => $operation_href_prefix . '/edit',
+  $query = db_select('google_analytics_counter_queue_queue', 'q')
+    ->fields('q')
+    ->orderBy('q.item_id', 'DESC')
+    ->execute();
+  while ($item = $query->fetchObject()) {
+    $item = GoogleAnalyticsCounterQueueQueueItem::factory($item);
+    $operation_href_prefix = 'admin/config/system/google-analytics-counter-queue/queue/item/' . $item->getIdentifier();
+    $operations = array(
+      'edit' => array(
+        'title' => t('edit'),
+        'href' => $operation_href_prefix . '/edit',
+      ),
+      'delete' => array(
+        'title' => t('delete'),
+        'href' => $operation_href_prefix . '/delete',
+        'options' => array(
+          'query' => array(
+            'destination' => 'admin/config/system/google-analytics-counter-queue/queue',
+          )
         ),
-        'delete' => array(
-          'title' => t('delete'),
-          'href' => $operation_href_prefix . '/delete',
-          'options' => array(
-            'query' => array(
-              'destination' => 'admin/config/system/google-analytics-counter-queue/priority-queue',
-            )
-          ),
-        ),
-      );
+      ),
+    );
 
-      if ($total_records = $item->getTotalRecords()) {
-        $remaining_records = $item->getRemainingRecords();
-        $processed_info = t('@remaining of @total', array(
-          '@total' => $total_records,
-          '@remaining' => $remaining_records ? $remaining_records : t('Unknown'),
-        ));
-      }
-      else {
-        $processed_info = t('Not started');
-      }
-
-      $table_rows[$item->getIdentifier()] = array(
-        'label' => array('data' => array(
-          '#markup' => l($item->getPath(), $item->getPath())),
-        ),
-        'processed' => array(
-          '#markup' => $processed_info,
-        ),
-        'operations' => array('data' => array(
-          '#theme' => 'links',
-          '#links' => $operations,
-          '#attributes' => array('class' => array('links', 'inline')),
-        )),
-        'weight' => array('data' => array(
-          '#type' => 'textfield',
-          '#title' => t('Weight for queue item'),
-          '#title_display' => 'invisible',
-          '#default_value' => $item->getWeight(),
-          '#value' => $item->getWeight(),
-          '#size' => 3,
-          '#attributes' => array('class' => array('queue-item-weight')),
-        )),
-        '#attributes' => array('class' => array('draggable')),
-      );
+    if ($total_records = $item->getTotalRecords()) {
+      $remaining_records = $item->getRemainingRecords();
+      $processed_info = t('@remaining of @total', array(
+        '@total' => $total_records,
+        '@remaining' => $remaining_records ? $remaining_records : t('Unknown'),
+      ));
     }
+    else {
+      $processed_info = t('Not started');
+    }
+
+    $table_rows[$item->getIdentifier()] = array(
+      'label' => array('data' => array(
+        '#markup' => l($item->getPath(), $item->getPath())),
+      ),
+      'processed' => array(
+        '#markup' => $processed_info,
+      ),
+      'operations' => array('data' => array(
+        '#theme' => 'links',
+        '#links' => $operations,
+        '#attributes' => array('class' => array('links', 'inline')),
+      )),
+      'weight' => array('data' => array(
+        '#type' => 'textfield',
+        '#title' => t('Weight for queue item'),
+        '#title_display' => 'invisible',
+        '#default_value' => $item->getWeight(),
+        '#value' => $item->getWeight(),
+        '#size' => 3,
+        '#attributes' => array('class' => array('queue-item-weight')),
+      )),
+      '#attributes' => array('class' => array('draggable')),
+    );
   }
 
   $form['queue_items'] = array(
@@ -204,7 +216,7 @@ function google_analytics_counter_queue_admin_priority_queue($form, &$form_state
       'weight' => t('Weight'),
     ),
     '#rows' => $table_rows,
-    '#empty' => t('There are currently no priority queue items.'),
+    '#empty' => t('There are currently no queue items.'),
     '#attributes' => array(
       'id' => 'queue-items',
     ),
@@ -224,14 +236,14 @@ function google_analytics_counter_queue_admin_priority_queue($form, &$form_state
 }
 
 /**
- * Validation handler for the priority queue overview management form.
+ * Validation handler for the queue overview management form.
  *
  * @param array $form
  *   An array of form elements and properties.
  * @param array $form_state
  *   An array representing the current form's state.
  */
-function google_analytics_counter_queue_admin_priority_queue_validate($form, &$form_state) {
+function google_analytics_counter_queue_admin_queue_manage_form_validate($form, &$form_state) {
   switch ($form_state['values']['op']) {
     case t('Update'):
       if (!isset($form_state['values']['queue_items']['select'])) {
@@ -242,14 +254,14 @@ function google_analytics_counter_queue_admin_priority_queue_validate($form, &$f
 }
 
 /**
- * Submit handler for the priority queue overview management form.
+ * Submit handler for the queue overview management form.
  *
  * @param array $form
  *   An array of form elements and properties.
  * @param array $form_state
  *   An array representing the current form's state.
  */
-function google_analytics_counter_queue_admin_priority_queue_submit($form, &$form_state) {
+function google_analytics_counter_queue_admin_queue_manage_form_submit($form, &$form_state) {
   switch ($form_state['values']['op']) {
     case t('Save changes'):
       if (!empty($form_state['values']['queue_items']['weight'])) {
@@ -289,7 +301,7 @@ function google_analytics_counter_queue_admin_priority_queue_submit($form, &$for
  * @return array
  *   Returns the confirmation form to render.
  */
-function google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm($form, $form_state, $queue_items) {
+function google_analytics_counter_queue_admin_queue_delete_multiple_confirm($form, $form_state, $queue_items) {
   $form['queue_items'] = array(
     '#tree' => TRUE,
     '#prefix' => '<ul>',
@@ -301,7 +313,7 @@ function google_analytics_counter_queue_admin_priority_queue_delete_multiple_con
         '#type' => 'hidden',
         '#value' => $queue_item->getIdentifier(),
         '#prefix' => '<li>',
-        '#suffix' => t('<em>@url</em>', array('@url' => $queue_item->getData()->path)) . '</li>',
+        '#suffix' => t('<em>@url</em>', array('@url' => $queue_item->getPath())) . '</li>',
       );
     }
   }
@@ -309,9 +321,9 @@ function google_analytics_counter_queue_admin_priority_queue_delete_multiple_con
     '#type' => 'hidden',
     '#value' => 'delete',
   );
-  $form['#submit'][] = 'google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm_submit';
+  $form['#submit'][] = 'google_analytics_counter_queue_admin_queue_delete_multiple_confirm_submit';
   $confirm_question = format_plural(count($queue_items), 'Are you sure you want to delete this item?', 'Are you sure you want to delete these items?');
-  return confirm_form($form, $confirm_question, 'admin/config/system/google-analytics-counter-queue/priority-queue', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
+  return confirm_form($form, $confirm_question, 'admin/config/system/google-analytics-counter-queue/queue', t('This action cannot be undone.'), t('Delete'), t('Cancel'));
 }
 
 /**
@@ -322,15 +334,15 @@ function google_analytics_counter_queue_admin_priority_queue_delete_multiple_con
  * @param array $form_state
  *   An array representing the current form's state.
  */
-function google_analytics_counter_queue_admin_priority_queue_delete_multiple_confirm_submit($form, &$form_state) {
+function google_analytics_counter_queue_admin_queue_delete_multiple_confirm_submit($form, &$form_state) {
   if ($form_state['values']['confirm']) {
     foreach (array_keys($form_state['values']['queue_items']) as $item_id) {
       if ($queue_item = google_analytics_counter_queue_queue_item_load($item_id)) {
-        $queue_item->delete();
+        $queue_item->delete(TRUE);
       }
     }
     drupal_set_message(t('You have successfully deleted all selected queue items.'));
-    $form_state['redirect'] = 'admin/config/system/google-analytics-counter-queue/priority-queue';
+    $form_state['redirect'] = 'admin/config/system/google-analytics-counter-queue/queue';
   }
 }
 
@@ -602,7 +614,6 @@ function google_analytics_counter_queue_admin_statistics($form, &$form_state) {
     '#options' => $statistic_rows,
     '#empty' => t('There is currently no statistics.'),
   );
-
   $form['pager'] = array('#markup' => theme('pager'));
 
   return $form;

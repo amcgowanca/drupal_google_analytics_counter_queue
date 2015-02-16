@@ -1,6 +1,7 @@
 <?php
 /**
  * @file
+ * node.google_analytics_counter_queue.inc
  */
 
 /**
@@ -21,13 +22,11 @@ function node_google_analytics_counter_queue_statistics_overview_alter(&$statist
 }
 
 /**
- * Implements hook_google_analytics_counter_queue_queue_item_processed().
+ * Implements hook_google_analytics_counter_queue_statistics_processed().
  */
-function node_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item, $statistics) {
-  // If the expire module exists and the queue item is a node path, lets attempt
-  // to purge the node paths via the Expire module.
+function node_google_analytics_counter_queue_statistics_processed($statistics, $source_path) {
   if (module_exists('expire')) {
-    if ($node_id = google_analytics_counter_queue_path_is_node_view($queue_item->getPath())) {
+    if ($node_id = google_analytics_counter_queue_path_is_node_view($source_path)) {
       if ($node = node_load($node_id)) {
         expire_execute_expiration('node', $node, EXPIRE_NODE_CUSTOM);
       }

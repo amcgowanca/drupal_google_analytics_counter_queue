@@ -5,9 +5,12 @@
  */
 
 /**
- * Class GoogleAnalyticsCounterQueueOAuthToken
+ * Represents a serializable OAuthToken.
  */
 class GoogleAnalyticsCounterQueueOAuthToken extends OAuthToken implements Serializable {
+  /**
+   * {@inheritdoc}
+   */
   public function serialize() {
     return serialize(array(
       'key' => $this->key,
@@ -15,6 +18,9 @@ class GoogleAnalyticsCounterQueueOAuthToken extends OAuthToken implements Serial
     ));
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public function unserialize($serialized_data) {
     $data = unserialize($serialized_data);
     $this->key = $data['key'];

@@ -45,20 +45,20 @@ function google_analytics_counter_queue_menu() {
     'type' => MENU_DEFAULT_LOCAL_TASK,
     'weight' => 1,
   );
-  $items['admin/config/system/google-analytics-counter-queue/priority-queue'] = array(
-    'title' => 'Priority Queue',
+  $items['admin/config/system/google-analytics-counter-queue/queue'] = array(
+    'title' => 'Queue',
     'type' => MENU_LOCAL_TASK,
-    'description' => 'Manage the priority queue.',
+    'description' => 'Manage the queue of items to be processed.',
     'access arguments' => array('administer google analytics counter queue'),
     'page callback' => 'drupal_get_form',
-    'page arguments' => array('google_analytics_counter_queue_admin_priority_queue'),
+    'page arguments' => array('google_analytics_counter_queue_admin_queue_manage_form'),
     'file' => 'google_analytics_counter_queue.admin.inc',
     'weight' => 3,
   );
-  $items['admin/config/system/google-analytics-counter-queue/priority-queue/add'] = array(
+  $items['admin/config/system/google-analytics-counter-queue/queue/add'] = array(
     'title' => 'Add queue item',
     'type' => MENU_LOCAL_ACTION,
-    'description' => 'Add a new item to the priority queue.',
+    'description' => 'Add a new item to the queue.',
     'access arguments' => array('administer google analytics counter queue'),
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_queue_item_edit'),
@@ -67,7 +67,7 @@ function google_analytics_counter_queue_menu() {
     'title' => 'Edit item',
     'type' => MENU_LOCAL_TASK,
     'context' => MENU_CONTEXT_INLINE,
-    'description' => 'Edit an existing item within the priority queue.',
+    'description' => 'Edit an existing item within the queue.',
     'access arguments' => array('administer google analytics counter queue'),
     'page callback' => 'google_analytics_counter_queue_queue_item_edit_page',
     'page arguments' => array(6),
@@ -76,7 +76,7 @@ function google_analytics_counter_queue_menu() {
     'title' => 'Delete item',
     'type' => MENU_LOCAL_TASK,
     'context' => MENU_CONTEXT_INLINE,
-    'description' => 'Delete an existing item within the priority queue.',
+    'description' => 'Delete an existing item within the queue.',
     'access arguments' => array('administer google analytics counter queue'),
     'page callback' => 'drupal_get_form',
     'page arguments' => array('google_analytics_counter_queue_queue_item_delete_confirm', 6),
@@ -195,7 +195,9 @@ function google_analytics_counter_queue_element_info() {
  * Implements hook_cron().
  */
 function google_analytics_counter_queue_cron() {
-  // TODO: Implement with switch for setting.
+  if (google_analytics_counter_queue_execute_chunk_processing_on_cron()) {
+    google_analytics_counter_queue_process_chunks();
+  }
 }
 
 /**
@@ -204,7 +206,7 @@ function google_analytics_counter_queue_cron() {
 function google_analytics_counter_queue_cron_queue_info() {
   $queues = array();
   $skip_on_cron = !((bool) google_analytics_counter_queue_execute_queues_on_cron());
-  $queues['google_analytics_counter_priority_queue'] = array(
+  $queues['google_analytics_counter_queue_queue'] = array(
     'worker callback' => 'google_analytics_counter_queue_process_queue',
     'time' => 120,
     'skip on cron' => $skip_on_cron,
@@ -285,6 +287,13 @@ function google_analytics_counter_queue_execute_queues_on_cron() {
 }
 
 /**
+ * @return boolean
+ */
+function google_analytics_counter_queue_execute_chunk_processing_on_cron() {
+  return variable_get('google_analytics_counter_queue_execute_chunk_processing_on_cron', TRUE);
+}
+
+/**
  * Queue worker for processing individual queue items.
  *
  * @param mixed $queue_item
@@ -306,7 +315,7 @@ function google_analytics_counter_queue_process_queue($queue_item) {
   $remaining_records = NULL;
   $pathview_info = array();
   $error = FALSE;
-  $start_index = 1;
+  $start_index = 0;
 
   $profile_id = google_analytics_counter_queue_api_profile_id();
 
@@ -324,6 +333,7 @@ function google_analytics_counter_queue_process_queue($queue_item) {
 
   $aggregate_info = array();
 
+  $total_records = 0;
   do {
     if ($total_records && $remaining_records) {
       $diff_records_count = $total_records - $remaining_records;
@@ -354,7 +364,13 @@ function google_analytics_counter_queue_process_queue($queue_item) {
 
     if (0 < $total_records) {
       if (isset($start_index)) {
-        $remaining_records = $total_records - ($start_index + $response['data']['itemsPerPage']);
+        $max_records = $start_index + $response['data']['itemsPerPage'];
+        if ($max_records >= $total_records) {
+          $remaining_records = 0;
+        }
+        else {
+          $remaining_records = $total_records - $max_records;
+        }
       }
       elseif ($response['data']['itemsPerPage'] < $total_records) {
         $remaining_records = $total_records - $response['data']['itemsPerPage'];
@@ -363,12 +379,7 @@ function google_analytics_counter_queue_process_queue($queue_item) {
         $remaining_records = 0;
       }
 
-      if (!empty($response['data']['rows'])) {
-        _google_analytics_counter_queue_api_request_data_process_aggregate($response['data']['rows'], $aggregate_info);
-      }
-      else {
-        $error = TRUE;
-      }
+      _google_analytics_counter_queue_api_request_data_process_aggregate($response['data']['rows'], $aggregate_info);
     }
     else {
       $error = TRUE;
@@ -376,7 +387,7 @@ function google_analytics_counter_queue_process_queue($queue_item) {
   }
   while (!$error && ($remaining_records > 0 || NULL === $remaining_records));
 
-  if (!$error && !empty($pathview_info)) {
+  if (!$error && !empty($aggregate_info)) {
     foreach ($queue_items as $k => &$queue_item) {
       $source_path = drupal_get_normal_path($queue_item->getPath());
       if (isset($aggregate_info[$source_path])) {
@@ -401,13 +412,15 @@ function google_analytics_counter_queue_process_queue($queue_item) {
 function google_analytics_counter_queue_process_chunks() {
   $client = google_analytics_counter_queue_api_client();
   $profile_id = google_analytics_counter_queue_api_profile_id();
-  $start_index = (int) variable_get('google_analytics_counter_queue_chunk_process_start_index', 0);
+  $start_index = google_analytics_counter_queue_chunk_process_start_index();
   if ($response = google_analytics_counter_queue_api_request_data($client, $profile_id, array('ga:pagePath'), array('ga:pageviews'), NULL, NULL, NULL, $start_index, NULL)) {
-    // TODO: If zero results are returned, reset the start index.
-    $aggregate_info = array();
-    if (!empty($response['data']['rows'])) {
-      _google_analytics_counter_queue_api_request_data_process_aggregate($response['data']['rows'], $aggregate_info);
+    if (empty($response['data']['rows'])) {
+      variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
+      return;
     }
+
+    $aggregate_info = array();
+    _google_analytics_counter_queue_api_request_data_process_aggregate($response['data']['rows'], $aggregate_info);
     // If actual data is returned and the aggregate information is populated,
     // process the statistics for each source path.
     if (!empty($aggregate_info)) {
@@ -427,6 +440,23 @@ function google_analytics_counter_queue_process_chunks() {
 }
 
 /**
+ * Returns the chunk processing start index value.
+ *
+ * @return int
+ *   The start index used for the next data chunk request.
+ */
+function google_analytics_counter_queue_chunk_process_start_index() {
+  return (int) variable_get('google_analytics_counter_queue_chunk_process_start_index', 0);
+}
+
+/**
+ * Resets the chunk processing start index value.
+ */
+function google_analytics_counter_queue_chunk_process_start_index_reset() {
+  variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
+}
+
+/**
  * @param array $data
  * @param array $aggregate
  */
@@ -435,7 +465,7 @@ function _google_analytics_counter_queue_api_request_data_process_aggregate(arra
     list($path, $view_count) = $row;
     $pathinfo = parse_url($path);
     if (!empty($pathinfo['path'])) {
-      $pathinfo['path'] = strtolower($pathinfo['path']);
+      $pathinfo['path'] = ltrim(strtolower($pathinfo['path']), '/');
       if (isset($aggregate[$pathinfo['path']]) && FALSE === $aggregate[$pathinfo['path']]) {
         continue;
       }
@@ -463,7 +493,7 @@ function _google_analytics_counter_queue_api_request_data_process_aggregate(arra
         if (!isset($aggregate[$source_path][$pathinfo['path']])) {
           $aggregate[$source_path][$pathinfo['path']] = 0;
         }
-        $aggregate[$source_path][$pathinfo['path']] += $view_count;
+        $aggregate[$source_path][$pathinfo['path']] += (int) $view_count;
       }
     }
   }
@@ -573,11 +603,11 @@ function _google_analytics_counter_queue_process_statistics($source_path, array 
  *   The queue instance.
  */
 function google_analytics_counter_queue_queue() {
-  return DrupalQueue::get('google_analytics_counter_queue');
+  return DrupalQueue::get('google_analytics_counter_queue_queue');
 }
 
 /**
- * Load callback handler for loading a single Queue item from the priority queue.
+ * Load callback handler for loading a single Queue item from the queue.
  *
  * @param int $item_id
  *   The queue item's item_id value (item identifier).
@@ -586,7 +616,15 @@ function google_analytics_counter_queue_queue() {
  *   Returns the queue item if it exists, otherwise returns NULL.
  */
 function google_analytics_counter_queue_queue_item_load($item_id) {
-  return GoogleAnalyticsCounterQueueQueueItem::load($item_id);
+  // TODO: Optimize this implementation.
+  $query = db_select('google_analytics_counter_queue_queue', 'q')
+    ->fields('q')
+    ->condition('item_id', $item_id)
+    ->execute();
+  if ($record = $query->fetchObject()) {
+    return GoogleAnalyticsCounterQueueQueueItem::factory($record);
+  }
+  return FALSE;
 }
 
 /**
@@ -599,7 +637,15 @@ function google_analytics_counter_queue_queue_item_load($item_id) {
  *   Returns the queue item if it exists, otherwise returns NULL.
  */
 function google_analytics_counter_queue_queue_item_load_by_path($path) {
-  return GoogleAnalyticsCounterQueueQueueItem::load(NULL, array('path' => $path));
+  // TODO: Optimize this implementation.
+  $query = db_select('google_analytics_counter_queue_queue', 'q')
+    ->fields('q')
+    ->condition('path', $path)
+    ->execute();
+  if ($record = $query->fetchObject()) {
+    return GoogleAnalyticsCounterQueueQueueItem::factory($record);
+  }
+  return FALSE;
 }
 
 /**
@@ -721,15 +767,13 @@ function google_analytics_counter_queue_form_process_tableselectdrag($element) {
  * @param string $position
  *   The location in which to retrieve the next weight value for. Valid options
  *   are either `top` or `bottom`. Default is `bottom`.
- * @param GoogleAnalyticsCounterQueueQueue $queue
- *   The queue to retrieve the next weight value within.
  *
  * @return mixed
  *   Returns the weight value
  */
-function google_analytics_counter_queue_queue_item_next_weight($position = 'bottom', GoogleAnalyticsCounterQueueQueue $queue) {
+function google_analytics_counter_queue_queue_item_next_weight($position = 'bottom') {
   $weight = FALSE;
-  $query = db_select($queue->getTable(), 'q')
+  $query = db_select('google_analytics_counter_queue_queue', 'q')
     ->fields('q', array('weight'))
     ->range(0, 1);
   switch ($position) {
@@ -947,36 +991,30 @@ function google_analytics_counter_queue_oauth_callback() {
 }
 
 /**
- * Checks if the specified $path exists within the $queue.
+ * Checks if the specified $path exists within the Queue.
  *
- * @param GoogleAnalyticsCounterQueueQueue $queue
- *   The queue to test if the $path exists within.
  * @param string $path
  *   The path to test if it exists.
  *
  * @return bool
  *   Returns TRUE if the path already exists within the queue, otherwise FALSE.
  */
-function google_analytics_counter_queue_queue_exists_with_path(GoogleAnalyticsCounterQueueQueue $queue, $path) {
+function google_analytics_counter_queue_queue_exists_with_path($path) {
   static $static_fast_cache = array();
-  if (!isset($static_fast_cache[$queue->getTable()])) {
-    $static_fast_cache[$queue->getTable()] = array();
-  }
-
-  if (!isset($static_fast_cache[$queue->getTable()][$path])) {
-    $query = db_select($queue->getTable(), 'q')
+  if (!isset($static_fast_cache[$path])) {
+    $query = db_select('google_analytics_counter_queue_queue', 'q')
       ->fields('q', array('item_id'))
       ->condition('q.path', $path)
       ->execute();
     if ($result = $query->fetchField()) {
-      $static_fast_cache[$queue->getTable()][$path] = TRUE;
+      $static_fast_cache[$path] = TRUE;
     }
     else {
-      $static_fast_cache[$queue->getTable()][$path] = FALSE;
+      $static_fast_cache[$path] = FALSE;
     }
   }
 
-  return $static_fast_cache[$queue->getTable()][$path];
+  return $static_fast_cache[$path];
 }
 
 /**
@@ -1017,7 +1055,7 @@ function google_analytics_counter_queue_queue_item_edit($form, &$form_state, Goo
   $form['item']['path'] = array(
     '#type' => 'textfield',
     '#title' => t('Path'),
-    '#description' => t('Specify a Drupal path (system or alias) which will be added to the priority queue for processing.'),
+    '#description' => t('Specify a Drupal path (system or alias) which will be added to the queue for processing.'),
     '#default_value' => $queue_item ? $queue_item->getPath() : '',
     '#required' => TRUE,
   );
@@ -1043,7 +1081,7 @@ function google_analytics_counter_queue_queue_item_edit($form, &$form_state, Goo
 
   $form['destination'] = array(
     '#type' => 'value',
-    '#value' => 'admin/config/system/google-analytics-counter-queue/priority-queue',
+    '#value' => 'admin/config/system/google-analytics-counter-queue/queue',
   );
   return $form;
 }
@@ -1060,7 +1098,7 @@ function google_analytics_counter_queue_queue_item_edit_validate($form, &$form_s
   $queue_item = $form['#queue_item'];
   if ((!empty($queue_item) && $queue_item->getPath() != $form_state['values']['path']) || empty($queue_item)) {
     if (google_analytics_counter_queue_valid_path($form_state['values']['path'])) {
-      if (google_analytics_counter_queue_queue_exists_with_path(google_analytics_counter_queue_priority_queue(), $form_state['values']['path'])) {
+      if (google_analytics_counter_queue_queue_exists_with_path($form_state['values']['path'])) {
         form_set_error('path', t('The specified path (%path) already exists within the queue.', array(
           '%path' => $form_state['values']['path'],
         )));
@@ -1084,14 +1122,13 @@ function google_analytics_counter_queue_queue_item_edit_submit($form, &$form_sta
   $queue_item = $form['#queue_item'];
   if (empty($queue_item)) {
     $queue_item = new GoogleAnalyticsCounterQueueQueueItem();
-    $queue_item->setQueue(google_analytics_counter_queue_priority_queue());
     $queue_item->setCreated(REQUEST_TIME);
   }
 
   $queue_item->setPath($form_state['values']['path']);
   if (isset($form_state['values']['position'])) {
     $position = $form_state['values']['position'];
-    if (FALSE !== $weight = google_analytics_counter_queue_queue_item_next_weight($position, $queue_item->getQueue())) {
+    if (FALSE !== ($weight = google_analytics_counter_queue_queue_item_next_weight($position))) {
       $queue_item->setWeight($weight);
     }
   }
@@ -1286,19 +1323,22 @@ function google_analytics_counter_queue_process_queue_batch_op($item_id, &$conte
   $queue_item->setExpires(time() + 3600);
   $queue_item->save();
 
-  $processed = FALSE;
   do {
+    $processed = FALSE;
     // Attempt to process the queue item for the first time (always). However,
     // should the queue item not be able to be fully processed or unable to be
     // processed at all (e.g. HTTP timeout), let's just try again.
     google_analytics_counter_queue_process_queue($queue_item);
     // Has the queue item been processed and the processed state set?
-    if (!$queue_item->getProcessedState() && $queue_item->getAttempts() > google_analytics_counter_queue_google_analytics_queue_item_threshold()) {
+    /* if (!$queue_item->getProcessedState() &&
+          (0 === $queue_item->getAttempts() ||
+          ($queue_item->getAttempts() > google_analytics_counter_queue_google_analytics_queue_item_threshold()))) {
       $processed = TRUE;
     }
     if ($queue_item->getProcessedState()) {
       $processed = TRUE;
-    }
+    } */
+    $processed = TRUE;
   }
   while (!$processed);
   // Keep in mind that the queue item might not actually be truly be deleted

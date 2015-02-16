@@ -1,6 +1,7 @@
 <?php
 /**
  * @file
+ * rules.google_analytics_counter_queue.inc
  */
 
 /**
@@ -25,8 +26,8 @@ function rules_google_analytics_counter_queue_queue_item_delete(GoogleAnalyticsC
 }
 
 /**
- * Implements hook_google_analytics_counter_queue_queue_item_processed().
+ * Implements hook_google_analytics_counter_queue_statistics_processed().
  */
-function rules_google_analytics_counter_queue_queue_item_processed(GoogleAnalyticsCounterQueueQueueItem $queue_item) {
-  rules_invoke_event('google_analytics_counter_queue_queue_item_processed', $queue_item);
+function rules_google_analydtics_counter_queue_statistics_processed($statistics, $source_path) {
+  rules_invoke_event('google_analytics_counter_queue_statistics_processed', $statistics, $source_path);
 }

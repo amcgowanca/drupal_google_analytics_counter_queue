@@ -15,68 +15,14 @@ class GoogleAnalyticsCounterQueueQueueItem {
    *
    * @param stdClass $item
    *   An stdClass instance which contains the required properties for creation
-   *   and instantiation of a new GoogleAnalyticsCounterQueueQueueItem instance.
-   * @param GoogleAnalyticsCounterQueueQueue $queue
-   *   The queue which this item belongs too.
+   *   and instantiation of a new GoogleAnalyticsCounterQueueQueueItem instance.\
    *
    * @return GoogleAnalyticsCounterQueueQueueItem
    *   Returns a newly created instantiated instance using the specified data.
    */
-  public static function factory(stdClass $item, GoogleAnalyticsCounterQueueQueue $queue = NULL) {
-    $instance = new self($queue, $item->item_id, $item->path, $item->created, $item->expire, $item->weight, $item->total_records, $item->remaining_records, $item->attempts);
+  public static function factory(stdClass $item) {
+    $instance = new self($item->item_id, $item->path, $item->created, $item->expire, $item->weight, $item->total_records, $item->remaining_records, $item->attempts);
     return $instance;
-  }
-
-  /**
-   * Loads a queue item from the database and creates a new instance.
-   *
-   * @access public
-   *
-   * @param int $item_id
-   *   The queue item's identifier.
-   *
-   * @param array $conditions
-   *   An array of conditions for matching properties of the queue item to load.
-   *
-   * @return GoogleAnalyticsCounterQueueQueueItem
-   *   Returns the queue item instance if exists otherwise returns FALSE.
-   */
-  public static function load($item_id, array $conditions = array()) {
-    if ($item_id) {
-      $conditions['item_id'] = $item_id;
-    }
-    $query = self::loadQueryBuild(google_analytics_counter_queue_queue(), $conditions);
-    $query = $query->execute();
-    if ($record = $query->fetchObject()) {
-      $instance = self::factory($record, google_analytics_counter_queue_queue());
-    }
-    else {
-      $instance = FALSE;
-    }
-    return $instance;
-  }
-
-  /**
-   * Helper method for initializing the SelectQuery for load() method.
-   *
-   * @access protected
-   *
-   * @param GoogleAnalyticsCounterQueueQueue $queue
-   *   The queue object to build the query for.
-   *
-   * @param array $conditions
-   *   An array of conditions for matching properties of the queue item to load.
-   *
-   * @return SelectQuery
-   *   The SelectQuery instance for the `$queue`'s table and fields.
-   */
-  protected static function loadQueryBuild(GoogleAnalyticsCounterQueueQueue $queue, array $conditions) {
-    $query = db_select($queue->getTable(), 'q')
-      ->fields('q');
-    foreach ($conditions as $property => $value) {
-      $query->condition('q.' . $property, $value);
-    }
-    return $query;
   }
 
   /**
@@ -162,9 +108,6 @@ class GoogleAnalyticsCounterQueueQueueItem {
    *
    * @access public
    *
-   *
-   * @param GoogleAnalyticsCounterQueueQueue $queue
-   *   The queue which this queue item belongs to.
    * @param int $id
    *   The queue item's identifier.
    * @param string $path
@@ -182,28 +125,16 @@ class GoogleAnalyticsCounterQueueQueueItem {
    * @param int $attempts
    *   The number of attempts to process this queue item.
    */
-  public function __construct(GoogleAnalyticsCounterQueueQueue $queue = NULL, $id = NULL, $path = '', $created = 0, $expires = 0, $weight = NULL, $total_records = NULL, $remaining_records = NULL, $attempts = 0) {
+  public function __construct($id = NULL, $path = '', $created = 0, $expires = 0, $weight = NULL, $total_records = NULL, $remaining_records = NULL, $attempts = 0) {
     $this->id = $id;
     $this->path = $path;
     $this->created = $created;
     $this->expires = $expires;
     $this->attempts = 0;
-
-    if ($queue) {
-      $this->setQueue($queue);
-      if (NULL === $weight) {
-        $this->weight = google_analytics_counter_queue_queue_item_next_weight('bottom', $queue);
-      }
-      else {
-        $this->weight = $weight;
-      }
-    }
-    else {
-      $this->weight = (int) $weight;
-    }
-
+    $this->weight = NULL === $weight ? google_analytics_counter_queue_queue_item_next_weight('bottom') : $weight;
     $this->total_records = $total_records;
     $this->remaining_records = $remaining_records;
+    $this->setQueue(google_analytics_counter_queue_queue());
   }
 
   /**
@@ -218,7 +149,7 @@ class GoogleAnalyticsCounterQueueQueueItem {
     return $this->id;
   }
 
-  public function setQueue(GoogleAnalyticsCounterQueueQueue $queue) {
+  final protected function setQueue(GoogleAnalyticsCounterQueueQueue $queue) {
     $this->queue = $queue;
     $this->changed = TRUE;
     return $this;
@@ -281,7 +212,7 @@ class GoogleAnalyticsCounterQueueQueueItem {
   public function setRemainingRecords($value) {
     $this->remaining_records = 0 > $value ? 0 : $value;
     $this->changed = TRUE;
-    return $this;g
+    return $this;
   }
 
   public function getRemainingRecords() {
@@ -315,11 +246,11 @@ class GoogleAnalyticsCounterQueueQueueItem {
     $transaction = db_transaction();
     try {
       if (empty($this->id)) {
-        $query = db_insert($this->queue->getTable());
+        $query = db_insert('google_analytics_counter_queue_queue');
         $op = 'insert';
       }
       else {
-        $query = db_update($this->queue->getTable())
+        $query = db_update('google_analytics_counter_queue_queue')
           ->condition('item_id', $this->id);
         $op = 'update';
       }
