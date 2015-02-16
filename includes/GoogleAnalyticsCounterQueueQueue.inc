@@ -93,7 +93,7 @@ class GoogleAnalyticsCounterQueueQueue implements DrupalReliableQueueInterface, 
    */
   public function claimItem($lease_time = 3600) {
     while (TRUE) {
-      $item = db_select($this->getTable(), 'q')
+      $item = db_select('google_analytics_counter_queue_queue', 'q')
         ->fields('q')
         ->condition('q.expire', 0)
         ->orderBy('q.weight', 'ASC')
