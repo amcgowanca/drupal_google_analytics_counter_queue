@@ -268,6 +268,8 @@ class GoogleAnalyticsCounterQueueQueueItem {
 
       if ('insert' == $op) {
         $this->id = $result;
+        $cache = &drupal_static('google_analytics_counter_queue_queue_exists_with_path', array());
+        $cache[$this->getPath()] = TRUE;
       }
 
       google_analytics_counter_queue_module_include();

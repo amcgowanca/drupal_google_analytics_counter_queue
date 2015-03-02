@@ -1000,7 +1000,7 @@ function google_analytics_counter_queue_oauth_callback() {
  *   Returns TRUE if the path already exists within the queue, otherwise FALSE.
  */
 function google_analytics_counter_queue_queue_exists_with_path($path) {
-  static $static_fast_cache = array();
+  $static_fast_cache = &drupal_static(__FUNCTION__, array());
   if (!isset($static_fast_cache[$path])) {
     $query = db_select('google_analytics_counter_queue_queue', 'q')
       ->fields('q', array('item_id'))
