@@ -287,3 +287,10 @@ function google_analytics_counter_queue_update_7001() {
   $schema = google_analytics_counter_queue_schema();
   db_create_table('google_analytics_counter_queue_queue', $schema['google_analytics_counter_queue_queue']);
 }
+
+/**
+ * Re-run the 7001 update for incorrect schemes installs.
+ */
+function google_analytics_counter_queue_update_7002() {
+  google_analytics_counter_queue_update_7001();
+}
