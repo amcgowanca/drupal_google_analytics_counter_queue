@@ -460,7 +460,7 @@ function google_analytics_counter_queue_chunk_process_start_index_reset() {
  * @param array $data
  * @param array $aggregate
  */
-function _google_analytics_counter_queue_api_request_data_process_aggregate(array &$data, array &$aggregate) {
+function _google_analytics_counter_queue_api_request_data_process_aggregate(array $data, array &$aggregate) {
   foreach ($data as $row) {
     list($path, $view_count) = $row;
     $pathinfo = parse_url($path);
