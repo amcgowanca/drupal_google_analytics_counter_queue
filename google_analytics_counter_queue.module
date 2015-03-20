@@ -537,33 +537,38 @@ function _google_analytics_counter_queue_process_statistics($source_path, array 
     if (FALSE === $view_count) {
       continue;
     }
-    // We use the time() function below instead of REQUEST_TIME due to the
-    // fact that this function is generally called within a long running
-    // process and time() is more accurate in this case.
-    if (isset($statistics->items[$path])) {
-      db_update('google_analytics_counter_queue_statistics_path')
-        ->fields(array(
-          'updated' => time(),
-          'count' => $view_count,
-        ))
-        ->condition('id', $statistics->items[$path]->id)
-        ->execute();
-      $statistics->items[$path]->count = $view_count;
-    }
-    else {
-      $fields = array(
-        'created' => time(),
-        'updated' => time(),
-        'path' => $path,
-        'count' => $view_count,
-        'statistic_id' => $statistics->statistic_id,
-      );
 
-      $id = db_insert('google_analytics_counter_queue_statistics_path')
-        ->fields($fields)
-        ->execute();
-      $fields['id'] = $id;
-      $statistics->items[$path] = (object)$fields;
+    try {
+      // We use the time() function below instead of REQUEST_TIME due to the
+      // fact that this function is generally called within a long running
+      // process and time() is more accurate in this case.
+      if (isset($statistics->items[$path])) {
+        db_update('google_analytics_counter_queue_statistics_path')
+          ->fields(array(
+            'updated' => time(),
+            'count' => $view_count,
+          ))
+          ->condition('id', $statistics->items[$path]->id)
+          ->execute();
+        $statistics->items[$path]->count = $view_count;
+      } else {
+        $fields = array(
+          'created' => time(),
+          'updated' => time(),
+          'path' => $path,
+          'count' => $view_count,
+          'statistic_id' => $statistics->statistic_id,
+        );
+
+        $id = db_insert('google_analytics_counter_queue_statistics_path')
+          ->fields($fields)
+          ->execute();
+        $fields['id'] = $id;
+        $statistics->items[$path] = (object)$fields;
+      }
+    }
+    catch (Exception $e) {
+      google_analytics_counter_queue_log_exception($e);
     }
   }
   // We perform a query to retrieve the sum as it calculating at runtime

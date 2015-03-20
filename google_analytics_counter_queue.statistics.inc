@@ -140,20 +140,30 @@ function google_analytics_counter_queue_statistics_create($path, $total_count = 
     'totalcount' => $total_count,
   );
 
-  $statistic_id = db_insert('google_analytics_counter_queue_statistics')
-    ->fields($statistic)
-    ->execute();
-  if ($statistic_id) {
-    $statistic['statistic_id'] = $statistic_id;
-    $statistic['items'] = array();
-    $statistic = (object) $statistic;
-    // Include this $statistic object within the static cached set.
-    $static_fast_cache = &google_analytics_counter_queue_statistics_static_cache();
-    $static_fast_cache['ids'][$statistic->statistic_id] = $statistic->path;
-    $static_fast_cache['paths'][$statistic->path] = $statistic;
-    return $statistic;
+  $transaction = db_transaction();
+  try {
+    $statistic_id = db_insert('google_analytics_counter_queue_statistics')
+      ->fields($statistic)
+      ->execute();
+    if ($statistic_id) {
+      $statistic['statistic_id'] = $statistic_id;
+      $statistic['items'] = array();
+      $statistic = (object)$statistic;
+      // Include this $statistic object within the static cached set.
+      $static_fast_cache = &google_analytics_counter_queue_statistics_static_cache();
+      $static_fast_cache['ids'][$statistic->statistic_id] = $statistic->path;
+      $static_fast_cache['paths'][$statistic->path] = $statistic;
+    }
+    else {
+      $statistic = FALSE;
+    }
   }
-  return FALSE;
+  catch (Exception $e) {
+    $statistic = FALSE;
+    google_analytics_counter_queue_log_exception($e);
+    $transaction->rollback();
+  }
+  return $statistic;
 }
 
 /**

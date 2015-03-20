@@ -156,9 +156,8 @@ function google_analytics_counter_queue_schema() {
       ),
       'path' => array(
         'type' => 'varchar',
-        'length' => '1024',
+        'length' => '4000',
         'not null' => TRUE,
-        'unique' => TRUE,
         'description' => 'The path. This is a normalized Drupal path.',
       ),
       'totalcount' => array(
@@ -204,9 +203,8 @@ function google_analytics_counter_queue_schema() {
       ),
       'path' => array(
         'type' => 'varchar',
-        'length' => '1024',
+        'length' => '4000',
         'not null' => TRUE,
-        'unique' => TRUE,
         'description' => 'The path.',
       ),
       'count' => array(
@@ -299,4 +297,13 @@ function google_analytics_counter_queue_update_7001() {
  */
 function google_analytics_counter_queue_update_7002() {
   google_analytics_counter_queue_update_7001();
+}
+
+/**
+ * Update statistical record table's path column field length.
+ */
+function google_analytics_counter_queue_update_7003() {
+  $schema = google_analytics_counter_queue_schema();
+  db_change_field('google_analytics_counter_queue_statistics', 'path', 'path', $schema['google_analytics_counter_queue_statistics']['fields']['path']);
+  db_change_field('google_analytics_counter_queue_statistics_path', 'path', 'path', $schema['google_analytics_counter_queue_statistics_path']['fields']['path']);
 }
