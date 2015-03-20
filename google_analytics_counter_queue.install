@@ -281,11 +281,17 @@ function google_analytics_counter_queue_update_7001() {
   variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
   variable_set('google_analytics_counter_queue_execute_chunk_processing_on_cron', TRUE);
   // Drop the previously implemented general queue.
-  db_drop_table('google_analytics_counter_queue_queue');
-  db_drop_table('google_analytics_counter_queue_priority_queue');
+  if (db_table_exists('google_analytics_counter_queue_queue')) {
+    db_drop_table('google_analytics_counter_queue_queue');
+  }
+  if (db_table_exists('google_analytics_counter_queue_priority_queue')) {
+    db_drop_table('google_analytics_counter_queue_priority_queue');
+  }
   // Create the new single queue table to be used.
-  $schema = google_analytics_counter_queue_schema();
-  db_create_table('google_analytics_counter_queue_queue', $schema['google_analytics_counter_queue_queue']);
+  if (!db_table_exists('google_analytics_counter_queue_queue')) {
+    $schema = google_analytics_counter_queue_schema();
+    db_create_table('google_analytics_counter_queue_queue', $schema['google_analytics_counter_queue_queue']);
+  }
 }
 
 /**
