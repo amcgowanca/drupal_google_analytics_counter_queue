@@ -413,7 +413,7 @@ function google_analytics_counter_queue_process_chunks() {
   $client = google_analytics_counter_queue_api_client();
   $profile_id = google_analytics_counter_queue_api_profile_id();
   $start_index = google_analytics_counter_queue_chunk_process_start_index();
-  if ($response = google_analytics_counter_queue_api_request_data($client, $profile_id, array('ga:pagePath'), array('ga:pageviews'), NULL, NULL, NULL, $start_index, NULL)) {
+  if ($response = google_analytics_counter_queue_api_request_data($client, $profile_id, array('ga:pagePath'), array('ga:pageviews'), array(), NULL, NULL, $start_index, NULL)) {
     if (empty($response['data']['rows'])) {
       variable_set('google_analytics_counter_queue_chunk_process_start_index', 0);
       return;

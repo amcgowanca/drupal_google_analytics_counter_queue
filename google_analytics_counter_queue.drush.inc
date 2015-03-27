@@ -143,7 +143,7 @@ function drush_google_analytics_counter_queue_item_run($item_id = NULL) {
  */
 function drush_google_analytics_counter_queue_process_chunks() {
   $number_of_chunks = (int) drush_get_option('chunks', 1);
-  if (100 > $number_of_chunks) {
+  if (100 < $number_of_chunks) {
     $number_of_chunks = 100;
   }
   elseif (0 > $number_of_chunks) {
