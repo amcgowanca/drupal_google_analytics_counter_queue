@@ -360,6 +360,10 @@ function google_analytics_counter_queue_admin_queue_delete_multiple_confirm_subm
 function google_analytics_counter_queue_admin_authentication_form($form, $form_state) {
   $client = google_analytics_counter_queue_api_client();
   if ($client->isAuthenticated()) {
+    if ($client->hasTokenExpired()) {
+      drupal_set_message(t('The access token for interacting with Google Analytics API has expired. However, we will attempt to refresh the token automatically upon next API request.'), 'warning');
+    }
+
     $webprops_response = google_analytics_counter_queue_api_request_web_properties();
     $profiles_response = google_analytics_counter_queue_api_request_profiles();
 
@@ -404,6 +408,10 @@ function google_analytics_counter_queue_admin_authentication_form($form, $form_s
       '#type' => 'submit',
       '#value' => t('Save settings'),
     );
+    $form['operations']['refresh_token'] = array(
+      '#type' => 'submit',
+      '#value' => t('Refresh access token'),
+    );
     $form['operations']['revoke_access_token'] = array(
       '#type' => 'submit',
       '#value' => t('Revoke access token'),
@@ -417,15 +425,21 @@ function google_analytics_counter_queue_admin_authentication_form($form, $form_s
       '#collapsible' => TRUE,
       '#collapsed' => FALSE,
     );
-    $form['settings']['google_analytics_counter_queue_hd'] = array(
+    $form['settings']['google_analytics_counter_queue_client_id'] = array(
       '#type' => 'textfield',
-      '#title' => t('Google Apps for Business (optional)'),
-      '#description' => t('Provide the domain name (e.g. google.com) if you domain is registered with Google Apps for Business. Otherwise, leave it blank.'),
-      '#default_value' => google_analytics_counter_queue_api_profile_id(),
+      '#title' => t('Client ID'),
+      '#default_value' => google_analytics_counter_queue_client_id(),
+      '#required' => TRUE,
+    );
+    $form['settings']['google_analytics_counter_queue_client_secret'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Client secret'),
+      '#default_value' => google_analytics_counter_queue_client_secret(),
+      '#required' => TRUE,
     );
     $form['settings']['submit'] = array(
       '#type' => 'submit',
-      '#value' => t('Authorize account'),
+      '#value' => t('Authorize application'),
     );
   }
   return $form;
@@ -442,12 +456,12 @@ function google_analytics_counter_queue_admin_authentication_form($form, $form_s
 function google_analytics_counter_queue_admin_authentication_form_submit($form, &$form_state) {
   $op = isset($form_state['values']['op']) ? $form_state['values']['op'] : '';
   switch ($op) {
-    case t('Authorize account'):
+    case t('Authorize application'):
+      variable_set('google_analytics_counter_queue_client_id', $form_state['values']['google_analytics_counter_queue_client_id']);
+      variable_set('google_analytics_counter_queue_client_secret', $form_state['values']['google_analytics_counter_queue_client_secret']);
       $client = google_analytics_counter_queue_api_client();
-      $request_token = $client->getRequestToken();
-      $_SESSION['google_analytics_counter_queue']['oauth']['token'] = $request_token;
-      $_SESSION['google_analytics_counter_queue']['destination'] = current_path();
-      $client->obtainAuthorization();
+      $_SESSION['google_analytics_counter_queue'] = TRUE;
+      google_analytics_counter_queue_api_auth_obtain_auth($client);
       break;
     case t('Save settings'):
       variable_set('google_analytics_counter_queue_api_profile_id', $form_state['values']['google_analytics_counter_queue_profile_id']);
@@ -458,6 +472,17 @@ function google_analytics_counter_queue_admin_authentication_form_submit($form, 
         $client->revokeToken();
       }
       drupal_set_message(t('Google Authentication access token has been successfully revoked.'));
+      break;
+    case t('Refresh access token'):
+      if ($client = google_analytics_counter_queue_api_client()) {
+        $refresh_success = google_analytics_counter_queue_api_request_refresh_token($client);
+        if (TRUE === $refresh_success) {
+          drupal_set_message(t('Google API access token has been refreshed.'));
+        }
+        else {
+          drupal_set_message(t('Unable to refresh Google API access token.'), 'error');
+        }
+      }
       break;
   }
 }

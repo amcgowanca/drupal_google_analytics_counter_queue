@@ -4,11 +4,9 @@ core = 7.x
 version = GOOGLE_ANALYTICS_COUNTER_QUEUE_VERSION
 
 dependencies[] = ctools
-dependencies[] = oauth_common
 dependencies[] = statistics
 
 files[] = includes/GoogleAnalyticsCounterQueueGoogleApiClient.inc
-files[] = includes/GoogleAnalyticsCounterQueueOAuthToken.inc
 files[] = includes/GoogleAnalyticsCounterQueuePriorityQueue.inc
 files[] = includes/GoogleAnalyticsCounterQueueQueue.inc
 files[] = includes/GoogleAnalyticsCounterQueueQueueItem.inc

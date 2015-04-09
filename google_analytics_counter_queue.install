@@ -8,10 +8,10 @@
  * Implements hook_install().
  */
 function google_analytics_counter_queue_install() {
-  variable_set('google_analytics_counter_queue_api_oauth_consumer_key', NULL);
-  variable_set('google_analytics_counter_queue_api_oauth_consumer_secret', NULL);
-  variable_set('google_analytics_counter_queue_oauth_token', NULL);
-  variable_set('google_analytics_counter_queue_api_oauth_token_secret', NULL);
+  variable_set('google_analytics_counter_queue_client_access_token', NULL);
+  variable_set('google_analytics_counter_queue_client_refresh_token', NULL);
+  variable_set('google_analytics_counter_queue_client_token_type', NULL);
+  variable_set('google_analytics_counter_queue_client_token_expires', 0);
   variable_set('google_analytics_counter_queue_api_profile_id', NULL);
   variable_set('google_analytics_counter_queue_execute_queues_on_cron', TRUE);
   variable_set('google_analytics_counter_queue_api_data_query_max_results', '1000');
@@ -39,10 +39,10 @@ function google_analytics_counter_queue_install() {
  * Implements hook_uninstall().
  */
 function google_analytics_counter_queue_uninstall() {
-  variable_del('google_analytics_counter_queue_api_oauth_consumer_key');
-  variable_del('google_analytics_counter_queue_api_oauth_consumer_secret');
-  variable_del('google_analytics_counter_queue_api_oauth_token');
-  variable_del('google_analytics_counter_queue_api_oauth_token_secret');
+  variable_del('google_analytics_counter_queue_client_access_token');
+  variable_del('google_analytics_counter_queue_client_refresh_token');
+  variable_del('google_analytics_counter_queue_client_token_type');
+  variable_del('google_analytics_counter_queue_client_token_expires');
   variable_del('google_analytics_counter_queue_api_profile_id');
   variable_del('google_analytics_counter_queue_execute_queues_on_cron');
   variable_del('google_analytics_counter_queue_api_data_query_max_results');
@@ -306,4 +306,21 @@ function google_analytics_counter_queue_update_7003() {
   $schema = google_analytics_counter_queue_schema();
   db_change_field('google_analytics_counter_queue_statistics', 'path', 'path', $schema['google_analytics_counter_queue_statistics']['fields']['path']);
   db_change_field('google_analytics_counter_queue_statistics_path', 'path', 'path', $schema['google_analytics_counter_queue_statistics_path']['fields']['path']);
+}
+
+/**
+ * Updates and changes for the OAuth 1.0 to 2.0 migrate.
+ */
+function google_analytics_counter_queue_update_7004() {
+  module_load_include('module', 'google_analytics_counter_queue');
+  // Delete old legacy variables.
+  variable_del('google_analytics_counter_queue_api_oauth_consumer_key');
+  variable_del('google_analytics_counter_queue_api_oauth_consumer_secret');
+  variable_del('google_analytics_counter_queue_api_oauth_token');
+  variable_del('google_analytics_counter_queue_api_oauth_token_secret');
+  // Initialize new variables for OAuth 2.0 integration.
+  variable_set('google_analytics_counter_queue_client_access_token', NULL);
+  variable_set('google_analytics_counter_queue_client_refresh_token', NULL);
+  variable_set('google_analytics_counter_queue_client_token_type', NULL);
+  variable_set('google_analytics_counter_queue_client_token_expires', 0);
 }

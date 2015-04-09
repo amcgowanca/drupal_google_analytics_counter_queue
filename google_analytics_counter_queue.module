@@ -817,104 +817,22 @@ function google_analytics_counter_queue_api_data_query_start_date() {
  * using the `new Google...` syntax.
  *
  * @return GoogleAnalyticsCounterQueueGoogleApiClient
- *   The client instance using the stored oauth consumer and access tokens.
+ *   The client instance.
  */
 function google_analytics_counter_queue_api_client() {
   static $static_fast_cache = NULL;
   if (NULL === $static_fast_cache) {
-    $static_fast_cache = new GoogleAnalyticsCounterQueueGoogleApiClient(
-      google_analytics_counter_queue_api_oauth_consumer(),
-      google_analytics_counter_queue_api_oauth_token()
-    );
+    $static_fast_cache = new GoogleAnalyticsCounterQueueGoogleApiClient();
   }
   return $static_fast_cache;
 }
 
-/**
- * Returns the Google API OAuth consumer key.
- *
- * @return string
- *   The consumer key stored, otherwise returns `anonymous`.
- */
-function google_analytics_counter_queue_api_oauth_consumer_key() {
-  return variable_get('google_analytics_counter_queue_api_oauth_consumer_key', 'anonymous');
+function google_analytics_counter_queue_client_id() {
+  return variable_get('google_analytics_counter_queue_client_id', '');
 }
 
-/**
- * Returns the Google API OAuth consumer secret.
- *
- * @return string
- *   The consumer secret stored, otherwise returns `anonymous`.
- */
-function google_analytics_counter_queue_api_oauth_consumer_secret() {
-  return variable_get('google_analytics_counter_queue_api_oauth_consumer_secret', 'anonymous');
-}
-
-/**
- * Returns the Google API OAuth consumer object.
- *
- * @param bool $reset
- *   A boolean indicating whether or not the static cached consumer token should
- *   be reset using the values from consumer token variables.
- *
- * @return GoogleAnalyticsCounterQueueOAuthToken
- *   The consumer token (key and secret) object instance.
- */
-function google_analytics_counter_queue_api_oauth_consumer($reset = FALSE) {
-  $static_fast_cache = &drupal_static('google_analytics_counter_queue_api_oauth_consumer', NULL);
-  if (!$static_fast_cache || $reset) {
-    $static_fast_cache = new GoogleAnalyticsCounterQueueOAuthToken(
-      google_analytics_counter_queue_api_oauth_consumer_key(),
-      google_analytics_counter_queue_api_oauth_consumer_secret()
-    );
-  }
-  return $static_fast_cache;
-}
-
-/**
- * Returns the Google API OAuth access token key.
- *
- * @return string
- *   Returns the access token key stored, otherwise NULL.
- */
-function google_analytics_counter_queue_api_oauth_token_key() {
-  return variable_get('google_analytics_counter_queue_api_oauth_token', NULL);
-}
-
-/**
- * Returns the Google API OAuth access token secret.
- *
- * @return string
- *   Returns the access token secret stored, otherwise NULL.
- */
-function google_analytics_counter_queue_api_oauth_token_secret() {
-  return variable_get('google_analytics_counter_queue_api_oauth_token_secret', NULL);
-}
-
-/**
- * Returns the Google API OAuth access token object.
- *
- * @param bool $reset
- *   A boolean indicating whether or not the static cached token should be
- *   reset using the values from oauth token variables.
- *
- * @return GoogleAnalyticsCounterQueueOAuthToken
- *   The access token (key and secret) object instance if they are set;
- *   otherwise will return NULL.
- */
-function google_analytics_counter_queue_api_oauth_token($reset = FALSE) {
-  $static_fast_cache = &drupal_static('google_analytics_counter_queue_api_oauth_token', NULL);
-  if (!$static_fast_cache || $reset) {
-    $oauth_token_key = google_analytics_counter_queue_api_oauth_token_key();
-    $oauth_token_secret = google_analytics_counter_queue_api_oauth_token_secret();
-    if (!empty($oauth_token_key) && !empty($oauth_token_secret) && 'anonymous' != $oauth_token_key && 'anonymous' != $oauth_token_secret) {
-      $static_fast_cache = new GoogleAnalyticsCounterQueueOAuthToken($oauth_token_key, $oauth_token_secret);
-    }
-    else {
-      return NULL;
-    }
-  }
-  return $static_fast_cache;
+function google_analytics_counter_queue_client_secret() {
+  return variable_get('google_analytics_counter_queue_client_secret', '');
 }
 
 /**
@@ -938,61 +856,75 @@ function google_analytics_counter_queue_oauth_callback_url() {
 }
 
 /**
- * Returns the display name for the xoauth_display_name parameters.
- *
- * @return string
- *   The display name.
- */
-function google_analytics_counter_queue_xoauth_display_name() {
-  $display_name = t('Google Analytics Counter Queue - Drupal module');
-  // Allow other modules to change the display name which is displayed on
-  // the Google accounts authorization form. This will allow sites to uniquely
-  // identify which application is being connected.
-  drupal_alter('google_analytics_counter_queue_xoauth_display_name', $display_name);
-  return $display_name;
-}
-
-/**
  * Page callback for the Google API's OAuth authentication.
  */
 function google_analytics_counter_queue_oauth_callback() {
-  $consumer_token = google_analytics_counter_queue_api_oauth_consumer();
-  // The OAuth request token will exist and be stored within the user's session
-  // upon initial authentication. Retrieve it and then remove the data from
-  // the session so that additional requests will not effectively work.
-  if (isset($_SESSION['google_analytics_counter_queue'])) {
-    $session_data = $_SESSION['google_analytics_counter_queue'];
-    unset($_SESSION['google_analytics_counter_queue']);
+  if (!isset($_SESSION['google_analytics_counter_queue'])) {
+    return drupal_access_denied();
   }
-  else {
+  unset($_SESSION['google_analytics_counter_queue']);
+
+  $query_parameters = drupal_get_query_parameters(NULL);
+  if (empty($query_parameters['code'])) {
     return drupal_access_denied();
   }
 
-  $parameters = drupal_get_query_parameters(NULL);
-  $oauth_token = isset($parameters['oauth_token']) ? $parameters['oauth_token'] : '';
-  $oauth_verifier = isset($parameters['oauth_verifier']) ? $parameters['oauth_verifier'] : '';
-  // The Google API will send back the OAuth Token and Verifier via GET params,
-  // therefore verify that they exist; should they not - exit.
-  if (!$oauth_token || !$oauth_verifier || empty($session_data['oauth']['token'])) {
-    return drupal_access_denied();
+  $parameters = array(
+    'code' => $query_parameters['code'],
+    'redirect_uri' => google_analytics_counter_queue_oauth_callback_url(),
+    'client_id' => google_analytics_counter_queue_client_id(),
+    'client_secret' => google_analytics_counter_queue_client_secret(),
+    'grant_type' => 'authorization_code',
+  );
+
+  $client = google_analytics_counter_queue_api_client();
+  $response = google_analytics_counter_queue_api_request($client, 'auth/access-token', $parameters);
+  if (200 == $response['code'] && !empty($response['data'])) {
+    if (!empty($response['data']['refresh_token'])) {
+      $client->setAccessToken($response['data']['access_token']);
+      $client->setRefreshToken($response['data']['refresh_token']);
+      $client->setTokenExpires($response['data']['expires_in']);
+      $client->setTokenType($response['data']['token_type']);
+      drupal_set_message(t('Successfully authenticated with Google Analytics API.'));
+    }
+    else {
+      drupal_set_message(t('Google Analytics API did not return a refresh token as part of the authentication. Manually revoke access via Google API for this application and attempt to re-authenticate.'), 'error');
+      $client->revokeToken();
+    }
   }
-  // Ensure that a user is not trying to "fake" the OAuth Token via the query
-  // parameters. Verify that the previously retrieved request key is equal
-  // to that of the query string parameter.
-  if ($session_data['oauth']['token']->key != $oauth_token) {
-    return drupal_access_denied();
+  else {
+    drupal_set_message(t('Unable to authenticate with Google Analytics API. Please try again.'), 'warning');
+    $client->revokeToken();
   }
-  // Create a new instance of the API Client class using the consumer token
-  // and the request token previously received via authentication.
-  $client = new GoogleAnalyticsCounterQueueGoogleApiClient($consumer_token, $session_data['oauth']['token']);
-  $client->setVerifier($oauth_verifier);
-  // Retrieve the access token.
-  $access_token = $client->getAccessToken();
-  // Set the access token key and secret so that it can be used later.
-  variable_set('google_analytics_counter_queue_api_oauth_token', $access_token->key);
-  variable_set('google_analytics_counter_queue_api_oauth_token_secret', $access_token->secret);
+
   // Redirect the user to the admin's authentication form for the module.
   drupal_goto('admin/config/system/google-analytics-counter-queue/authentication');
+}
+
+function google_analytics_counter_queue_api_request_refresh_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
+  $refresh_token = $client->getRefreshToken();
+  if (!empty($refresh_token)) {
+    $parameters = array(
+      'grant_type' => 'refresh_token',
+      'client_id' => google_analytics_counter_queue_client_id(),
+      'client_secret' => google_analytics_counter_queue_client_secret(),
+      'refresh_token' => $refresh_token,
+    );
+
+    $response = google_analytics_counter_queue_api_request($client, 'auth/access-token', $parameters);
+    if (200 == $response['code'] && !empty($response['data'])) {
+      $client->setAccessToken($response['data']['access_token']);
+      $client->setTokenExpires($response['data']['expires_in']);
+      $client->setTokenType($response['data']['token_type']);
+      return TRUE;
+    } else {
+      $client->revokeToken();
+    }
+  }
+  else {
+    $client->revokeToken();
+  }
+  return FALSE;
 }
 
 /**
@@ -1365,55 +1297,16 @@ function google_analytics_counter_queue_api_auth_obtain_auth(GoogleAnalyticsCoun
     overlay_close_dialog();
     overlay_deliver_empty_page();
   }
-  // Retrieve the consumer token from the API client instance.
-  $consumer_token = $client->getConsumer()->key;
-  if (empty($consumer_token)) {
-    google_analytics_counter_queue_log(WATCHDOG_ALERT, 'Attempting to obtain authorization from Google accounts, however, the consumer oauth key is empty.');
-    drupal_set_message(t('An error occurred while attempting to obtain authorization. Please try again.'), 'warning');
-    drupal_goto('admin/config/system/google-analytics-counter-queue/authentication');
-    return;
-  }
-  // Redirect the user to the Google Accounts API authorization form. If the
-  // user provides access, he or she will be redirected and returned to the
-  // oauth callback page at /google-analytics-counter-queue/oauth.
-  drupal_goto('https://www.google.com/accounts/OAuthAuthorizeToken', array(
-    'query' => array(
-      'oauth_token' => $consumer_token,
-      'hd' => 'default',
-    ),
-  ));
-}
 
-/**
- * Performs an API request to retrieve the request token.
- *
- * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
- *   The API client instance.
- *
- * @return array
- *   Returns the HTTP response data.
- */
-function google_analytics_counter_queue_api_auth_request_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
-  $parameters = array(
+  $params = array(
+    'response_type' => 'code',
+    'redirect_uri' => google_analytics_counter_queue_oauth_callback_url(),
+    'client_id' => google_analytics_counter_queue_client_id(),
     'scope' => 'https://www.googleapis.com/auth/analytics.readonly',
-    'xoauth_displayname' => google_analytics_counter_queue_xoauth_display_name(),
-    'oauth_callback' => google_analytics_counter_queue_oauth_callback_url(),
+    'access_type' => 'offline',
   );
-  return google_analytics_counter_queue_api_request($client, 'auth/request-token', $parameters);
-}
-
-/**
- * Performs an API request to retrieve the access token.
- *
- * @param GoogleAnalyticsCounterQueueGoogleApiClient $client
- *   The API client instance.
- *
- * @return array
- *   Returns the HTTP response data.
- */
-function google_analytics_counter_queue_api_auth_access_token(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
-  $parameters = array('oauth_verifier' => $client->getVerifier());
-  return google_analytics_counter_queue_api_request($client, 'auth/access-token', $parameters);
+  drupal_goto('https://accounts.google.com/o/oauth2/auth', array('query' => $params));
+  drupal_exit();
 }
 
 /**
@@ -1426,7 +1319,8 @@ function google_analytics_counter_queue_api_auth_access_token(GoogleAnalyticsCou
  *   Returns the HTTP response data.
  */
 function google_analytics_counter_queue_api_auth_revoke(GoogleAnalyticsCounterQueueGoogleApiClient $client) {
-  return google_analytics_counter_queue_api_request($client, 'auth/revoke-token');
+  $parameters = array('token' => $client->getAccessToken());
+  return google_analytics_counter_queue_api_request($client, 'auth/revoke', $parameters);
 }
 
 /**
@@ -1608,6 +1502,8 @@ function google_analytics_counter_queue_api_request_profiles($account_id = NULL,
  *   Returns the HTTP response data as an array if successful, otherwise FALSE.
  */
 function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueGoogleApiClient $client, $endpoint_name, array $parameters = array(), array $headers = array(), $timeout = NULL) {
+  static $in_recursive_http_request = FALSE;
+
   $endpoint = google_analytics_counter_queue_api_endpoint_info($endpoint_name);
   // If the endpoint does not exist, log the error and return FALSE.
   if (!$endpoint) {
@@ -1623,9 +1519,22 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
   // If the endpoint requires authentication (default value is TRUE), validate
   // that the client is authenticated and should it not be, log the error and
   // return FALSE.
-  if ($endpoint['authenticated'] && !$client->isAuthenticated()) {
-    google_analytics_counter_queue_log(WATCHDOG_WARNING, 'Attempt t perform Google API request without being authenticated. Endpoint is: %endpoint', array('%endpoint' => $endpoint_name));
-    return FALSE;
+  if ($endpoint['authenticated']) {
+    if (!$client->isAuthenticated()) {
+      google_analytics_counter_queue_log(WATCHDOG_WARNING, 'Attempt to perform Google API request without being authenticated. Endpoint is: %endpoint', array('%endpoint' => $endpoint_name));
+      return FALSE;
+    }
+    elseif (!$in_recursive_http_request) {
+      if ($client->hasTokenExpired()) {
+        $in_recursive_http_request = TRUE;
+        $refresh_success = google_analytics_counter_queue_api_request_refresh_token($client);
+        $in_recursive_http_request = FALSE;
+        if (FALSE === $refresh_success) {
+          google_analytics_counter_queue_log(WATCHDOG_ERROR, 'Attempt to refresh Google API access token automatically failed.');
+          return FALSE;
+        }
+      }
+    }
   }
 
   // Check if the endpoint's path has specific parameters (e.g. @account-id) and
@@ -1639,27 +1548,20 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
   // Ensure the endpoint has all default properties to ensure that no HTTP 400
   // Bad Requests occur results as a result of missing parameters.
   $parameters = $parameters + $endpoint['parameters'];
+  // Automatically assign the client access token if it is present in the
+  // parameters and is empty.
+  if (isset($parameters['access_token']) && empty($parameters['access_token'])) {
+    $parameters['access_token'] = $client->getAccessToken();
+  }
+
   // Concatenate the endpoint's host and path.
   $request_url = $endpoint['host'] . '/' . $endpoint['path'];
 
   google_analytics_counter_queue_module_include();
-
   drupal_alter('google_analytics_counter_queue_api_request', $parameters, $endpoint, $request_url);
 
   $original_parameters = $parameters;
   $compiled_parameters = _google_analytics_counter_queue_api_request_parameters_compile($original_parameters);
-
-  $request = OAuthRequest::from_consumer_and_token($client->getConsumer(), $client->getToken(), $endpoint['method'], $request_url, $compiled_parameters);
-  $request->sign_request($client->getSignatureMethod(), $client->getConsumer(), $client->getToken());
-
-  $http_data = '';
-  if (GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_POST == $request->get_normalized_http_method()) {
-    $url = $request->get_normalized_http_url();
-    $http_data = http_build_query($request->get_parameters());
-  }
-  else {
-    $url = $request->to_url();
-  }
 
   if (NULL === $headers) {
     $headers = array();
@@ -1670,13 +1572,28 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
 
   $http_options = array(
     'headers' => $headers,
-    'method' => $request->get_normalized_http_method(),
     'timeout' => $timeout,
-    'data' => $http_data,
+    'method' => 'GET',
+    'data' => NULL,
     // Do not allow any redirects to occur, this will ensure that multiple
     // HTTP requests are not happening.
     'max_redirects' => 0,
   );
+
+  switch ($endpoint['method']) {
+    case GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_POST:
+      $http_options['method'] = 'POST';
+      $http_options['data'] = http_build_query($compiled_parameters);
+      if (!isset($http_options['headers']['Content-Type'])) {
+        $http_options['headers']['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
+      $url = $request_url;
+      break;
+    case GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_GET:
+    default:
+      $url = $request_url . '?' . http_build_query($compiled_parameters);
+      break;
+  }
 
   $http_response = drupal_http_request($url, $http_options);
   if ('200' == $http_response->code) {
@@ -1692,7 +1609,7 @@ function google_analytics_counter_queue_api_request(GoogleAnalyticsCounterQueueG
       $http_response->data = '';
     }
 
-    if ('auth/revoke-token' != $endpoint['name']) {
+    if ('auth/revoke' != $endpoint['name']) {
       google_analytics_counter_queue_log(WATCHDOG_ERROR, 'Attempted to perform HTTP request to Google API and received a non-HTTP 200 response. Response Code: %response_code, Response Error: %response_error, Response Status Message: %response_message, Response body: %response_body', array(
         '%response_error' => $http_response->code,
         '%response_error' => !empty($http_response->error) ? $http_response->error : 'No error message',
@@ -1800,28 +1717,29 @@ function google_analytics_counter_queue_api_endpoint_info($endpoint = NULL) {
  */
 function _google_analytics_counter_queue_api_endpoint_info() {
   return array(
-    'auth/request-token' => array(
-      'host' => 'https://www.google.com',
-      'path' => 'accounts/OAuthGetRequestToken',
-      'authenticated' => FALSE,
-      'json' => FALSE,
-    ),
     'auth/access-token' => array(
-      'host' => 'https://www.google.com',
-      'path' => 'accounts/OAuthGetAccessToken',
+      'host' => 'https://accounts.google.com',
+      'path' => 'o/oauth2/token',
       'authenticated' => FALSE,
-      'json' => FALSE,
+      'json' => TRUE,
+      'method' => GOOGLE_ANALYTICS_COUNTER_QUEUE_HTTP_POST,
+      'parameters' => array(
+        'grant_type' => 'authorization_code',
+      ),
     ),
-    'auth/revoke-token' => array(
-      'host' => 'https://www.google.com',
-      'path' => 'accounts/AuthSubRevokeToken',
+    'auth/revoke' => array(
+      'host' => 'https://accounts.google.com',
+      'path' => 'o/oauth2/revoke',
       'authenticated' => FALSE,
-      'json' => FALSE,
+      'json' => TRUE,
     ),
     'analytics/web-properties' => array(
       'path' => 'management/accounts/@account-id/webproperties',
       'path_parameters' => array(
         '@account-id' => '~all',
+      ),
+      'parameters' => array(
+        'access_token' => '',
       ),
     ),
     'analytics/profiles' => array(
@@ -1830,10 +1748,14 @@ function _google_analytics_counter_queue_api_endpoint_info() {
         '@account-id' => '~all',
         '@webproperty-id' => '~all',
       ),
+      'parameters' => array(
+        'access_token' => '',
+      ),
     ),
     'analytics/data' => array(
       'path' => 'data/ga',
       'parameters' => array(
+        'access_token' => '',
         'ids' => array(),
         'dimensions' => array(),
         'filters' => array(),
