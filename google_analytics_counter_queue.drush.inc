@@ -154,17 +154,20 @@ function drush_google_analytics_counter_queue_process_chunks() {
     return drush_log(dt('The number of chunks to process was zero, exiting early.'));
   }
 
-  drupal_set_time_limit(0);
-  // TODO: Add lock mechanism.
+  $lock_name = 'google_analytics_counter_queue_process_chunks';
+  if (lock_acquire($lock_name)) {
+    drupal_set_time_limit(0);
 
-  $default_sleep_time = 3;
-  $sleep_time = (int) drush_get_option('sleep', $default_sleep_time);
-  $sleep_time = 0 < $sleep_time ? $sleep_time : $default_sleep_time;
-  for ($i = 0; $i < $number_of_chunks; ) {
-    drush_log(dt('Google Analytics Counter Queue: processing chunk @i of @n', array('@i' => ++$i, '@n' => $number_of_chunks)));
-    @ignore_user_abort(TRUE);
-    google_analytics_counter_queue_process_chunks();
-    @ignore_user_abort(FALSE);
-    @sleep($sleep_time);
+    $default_sleep_time = 3;
+    $sleep_time = (int)drush_get_option('sleep', $default_sleep_time);
+    $sleep_time = 0 < $sleep_time ? $sleep_time : $default_sleep_time;
+    for ($i = 0; $i < $number_of_chunks;) {
+      drush_log(dt('Google Analytics Counter Queue: processing chunk @i of @n', array('@i' => ++$i, '@n' => $number_of_chunks)));
+      @ignore_user_abort(TRUE);
+      google_analytics_counter_queue_process_chunks();
+      @ignore_user_abort(FALSE);
+      @sleep($sleep_time);
+    }
+    lock_release($lock_name);
   }
 }
